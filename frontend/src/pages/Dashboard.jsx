@@ -23,7 +23,7 @@ const weeklyStudy = [
 
 const recentActivity = [
   { icon: '🧠', text: 'Cortex AI suggested 2 extra DBMS labs', time: '2h ago', color: '#6366f1' },
-  { icon: '📈', text: 'Opti Score increased by 4 points', time: '5h ago', color: '#10b981' },
+  { icon: '📈', text: 'Opti Score initialized successfully', time: 'Just now', color: '#10b981' },
   { icon: '⚠️', text: 'DBMS attendance below 75% threshold', time: '1d ago', color: '#f59e0b' },
   { icon: '✅', text: 'Completed Networks assignment', time: '1d ago', color: '#10b981' },
   { icon: '🎯', text: 'New study plan generated for this week', time: '2d ago', color: '#6366f1' },
@@ -34,12 +34,36 @@ const riskBg = { Low: '#f0fdf4', Medium: '#fffbeb', High: '#fef2f2' }
 const riskBorder = { Low: '#bbf7d0', Medium: '#fde68a', High: '#fecaca' }
 
 export default function Dashboard() {
-  const { profile } = useAuthStore()
   const navigate = useNavigate()
+  
+  // We use a local state to force the UI to update the exact moment the data arrives
+  const [liveProfile, setLiveProfile] = useState(null)
   const [greeting, setGreeting] = useState('')
   const [time, setTime] = useState(new Date())
-  const [optiScore] = useState(78)
   const maxBar = Math.max(...weeklyStudy.map(d => d.hours))
+
+  useEffect(() => {
+    async function secureProfileFetch() {
+      // 1. Force React to WAIT for Supabase to securely load the auth token into memory
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        // 2. Now that the token is active, fetch the profile using the confirmed ID
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+          
+        if (data) {
+          setLiveProfile(data); // Instantly updates the text on your screen
+          // Updates your global background store so the Planner & Finance pages work too
+          useAuthStore.setState({ profile: data, user: session.user });
+        }
+      }
+    }
+    secureProfileFetch();
+  }, []);
 
   useEffect(() => {
     const h = new Date().getHours()
@@ -50,6 +74,11 @@ export default function Dashboard() {
     const timer = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  // Safely extract the data or fall back to defaults while loading
+  const optiScore = liveProfile?.opti_score ?? 0;
+  const firstName = liveProfile?.full_name?.split(' ')[0] ?? 'Student';
+  const initial = liveProfile?.full_name?.[0]?.toUpperCase() ?? 'S';
 
   const scoreColor = optiScore >= 80 ? '#10b981' : optiScore >= 60 ? '#f59e0b' : '#ef4444'
   const scoreBg = optiScore >= 80 ? '#f0fdf4' : optiScore >= 60 ? '#fffbeb' : '#fef2f2'
@@ -74,7 +103,7 @@ export default function Dashboard() {
       }}>
         <div>
           <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.3px' }}>
-            {greeting}, {profile?.full_name?.split(' ')[0] ?? 'Student'} 👋
+            {greeting}, {firstName} 👋
           </h1>
           <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>
             {time.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
@@ -106,7 +135,7 @@ export default function Dashboard() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '14px', fontWeight: 700, color: '#fff', cursor: 'pointer'
           }}>
-            {profile?.full_name?.[0]?.toUpperCase() ?? 'S'}
+            {initial}
           </div>
         </div>
       </div>
@@ -132,7 +161,7 @@ export default function Dashboard() {
                   {optiScore}
                   <span style={{ fontSize: '16px', fontWeight: 400, opacity: 0.6 }}>/100</span>
                 </div>
-                <p style={{ fontSize: '12px', opacity: 0.7, margin: '6px 0 0' }}>↑ +4 this week</p>
+                <p style={{ fontSize: '12px', opacity: 0.7, margin: '6px 0 0' }}>Latest recorded score</p>
               </div>
               <div style={{
                 width: '44px', height: '44px', borderRadius: '12px',

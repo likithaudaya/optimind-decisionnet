@@ -27,27 +27,47 @@ export default function Register() {
     return true
   }
 
-  const handleRegister = async () => {
-    if (!form.department.trim()) { toast.error('Enter your department'); return }
-    setLoading(true)
-    const { error } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        data: {
-          full_name: form.full_name,
-          role: form.role,
-          semester: form.semester,
-          department: form.department,
-          student_id: form.student_id,
+  const handleRegister = async (e) => {
+    if (e) e.preventDefault();
+    
+    if (form.password !== form.confirm_password) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    if (!form.department.trim()) {
+      toast.error('Enter your department');
+      return;
+    }
+
+    setLoading(true);
+    
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: form.email,
+        password: form.password,
+        options: {
+          data: {
+            full_name: form.full_name,
+            role: form.role,
+            department: form.department,
+            semester: form.semester,
+            student_id: form.student_id
+          }
         }
-      }
-    })
-    if (error) { toast.error(error.message); setLoading(false); return }
-    await supabase.auth.signOut()
-    toast.success('Account created! Please sign in.')
-    navigate('/login')
-  }
+      });
+
+      if (error) throw error;
+
+      // Force sign out immediately after registration to prevent stale auto-login bugs
+      await supabase.auth.signOut();
+      toast.success("Account created successfully! Please sign in.");
+      navigate('/login');
+    } catch (error) {
+      toast.error(error.message || "Failed to create account");
+      setLoading(false);
+    }
+  };
 
   const inputStyle = (field) => ({
     width: '100%',
