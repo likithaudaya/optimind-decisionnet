@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Calendar, Clock, CheckCircle, Play, 
-  Pause, RotateCcw, Award, Flame, Zap, Plus 
+  Pause, RotateCcw, Plus, Trash2, ChevronDown
 } from 'lucide-react';
 import { supabase } from '../services/supabase';
 import { useAuthStore } from '../store/authStore';
@@ -11,218 +11,268 @@ import toast from 'react-hot-toast';
 export default function Planner() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('tasks');
-  const [timerSeconds, setTimerSeconds] = useState(1500); // Default 25 Minutes
+  
+  // Timer States
+  const [timerSeconds, setTimerSeconds] = useState(1500); // 25 Minutes
   const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [selectedSubject, setSelectedSubject] = useState('DBMS');
   const [focusScore, setFocusScore] = useState(85);
   const [sessionNotes, setSessionNotes] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('General');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Dynamic array simulating your reinforcement learning reward engine
-  const [tasks, setTasks] = useState([
-    { id: 1, subject: 'DBMS', topic: 'Indexing & B+ Trees', duration: '45m', priority: 'Critical', done: false, reward: 120 },
-    { id: 2, subject: 'Data Structures', topic: 'Graph Cycles via DFS', duration: '60m', priority: 'High', done: false, reward: 150 },
-    { id: 3, subject: 'Operating Systems', topic: 'Page Fault Allocations', duration: '30m', priority: 'Medium', done: true, reward: 90 },
-    { id: 4, subject: 'Computer Networks', topic: 'TCP 3-Way Handshake Protocols', duration: '40m', priority: 'Low', done: false, reward: 80 }
-  ]);
+  // Task States
+  const [tasks, setTasks] = useState([]);
+  const [newTask, setNewTask] = useState({ subject: '', topic: '', duration: '30m', priority: 'Medium' });
+  const [isAddingTask, setIsAddingTask] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(true);
+  
+  // Custom Dropdown State
+  const [isPriorityOpen, setIsPriorityOpen] = useState(false);
 
-  // Pomodoro Timer Logic Core
+  const fetchTasks = async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase.from('study_tasks').select('*').eq('student_id', user.id).order('created_at', { ascending: false });
+      if (error) throw error;
+      setTasks(data || []);
+    } catch (err) {
+      console.error('Error fetching tasks:', err);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+  useEffect(() => { fetchTasks(); }, [user]);
+
   useEffect(() => {
     let interval = null;
     if (isTimerRunning && timerSeconds > 0) {
-      interval = setInterval(() => {
-        setTimerSeconds(prev => prev - 1);
-      }, 1000);
+      interval = setInterval(() => setTimerSeconds(s => s - 1), 1000);
     } else if (timerSeconds === 0) {
       setIsTimerRunning(false);
-      toast.success("Focus block completed! Log your study session session below.");
+      toast.success("Pomodoro Complete! Take a break.");
     }
     return () => clearInterval(interval);
   }, [isTimerRunning, timerSeconds]);
 
-  const formatTime = (secs) => {
-    const mins = Math.floor(secs / 60);
-    const remainder = secs % 60;
-    return `${mins.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
-  };
-
-  // Commits transaction operations straight to public.study_sessions database schema table
-  const handleLogStudySession = async (e) => {
-    if (e) e.preventDefault();
-    if (!user) return toast.error("Active user context missing.");
-
-    setIsSubmitting(true);
-    const durationMinutes = Math.round((1500 - timerSeconds) / 60) || 25;
-
+  const handleAddTask = async (e) => {
+    e.preventDefault();
+    if (!newTask.subject || !newTask.topic) return toast.error("Subject and Topic required");
+    setIsAddingTask(true);
     try {
-      const { error } = await supabase
-        .from('study_sessions')
-        .insert({
-          student_id: user.id,
-          subject: selectedSubject,
-          duration_minutes: durationMinutes,
-          focus_score: focusScore,
-          notes: sessionNotes || "Pomodoro completion run log segment."
-        });
-
+      const { error } = await supabase.from('study_tasks').insert({ student_id: user.id, ...newTask });
       if (error) throw error;
-
-      toast.success("Session telemetry safely committed to Supabase!");
-      setSessionNotes('');
-      setTimerSeconds(1500); // Reset clock bounds
-    } catch (err) {
-      toast.error(`Database commit failure: ${err.message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
+      setNewTask({ subject: '', topic: '', duration: '30m', priority: 'Medium' });
+      fetchTasks();
+      toast.success("Task added to queue!");
+    } catch (err) { toast.error(err.message); } finally { setIsAddingTask(false); }
   };
+
+  const toggleTask = async (task) => {
+    try {
+      const { error } = await supabase.from('study_tasks').update({ done: !task.done }).eq('id', task.id);
+      if (error) throw error;
+      fetchTasks();
+    } catch (err) { toast.error("Failed to update task"); }
+  };
+
+  const deleteTask = async (id) => {
+    try {
+      const { error } = await supabase.from('study_tasks').delete().eq('id', id);
+      if (error) throw error;
+      fetchTasks();
+    } catch (err) { toast.error("Failed to delete task"); }
+  };
+
+  const handleSaveSession = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from('study_sessions').insert({
+        student_id: user.id, subject: selectedSubject, duration_minutes: Math.round((1500 - timerSeconds) / 60) || 25, focus_score: focusScore, notes: sessionNotes
+      });
+      if (error) throw error;
+      toast.success("Focus session logged successfully!");
+      setSessionNotes(''); setTimerSeconds(1500); setIsTimerRunning(false);
+    } catch (err) { toast.error(err.message); } finally { setIsSubmitting(false); }
+  };
+
+  const animContainer = { hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0, transition: { duration: 0.3 } } };
 
   return (
-    <div className="min-h-screen bg-[#f8f9fc] p-6 lg:p-10 font-['Inter'] text-slate-900">
+    <div className="min-h-screen bg-[#f8fafc] p-6 lg:p-10 font-['Inter'] text-slate-900">
       
-      {/* Dynamic Module Header Section */}
-      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/60 pb-6">
+      {/* ── HEADER ── */}
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900">RL Study Planner</h1>
-          <p className="text-slate-500 text-sm font-medium mt-1">Adaptive Q-Learning Schedule Optimization & Session Logs.</p>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">Study Planner</h1>
+          <p className="text-slate-500 text-sm font-medium mt-1">Pomodoro focus engine and task queue.</p>
         </div>
-
-        {/* Tab Interface Nav Controls */}
-        <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 self-start md:self-auto">
-          <button 
-            onClick={() => setActiveTab('tasks')}
-            className={`px-5 py-2.5 text-xs font-bold transition-all uppercase tracking-wider rounded-xl ${activeTab === 'tasks' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-700'}`}
-          >
-            Priority Queue
-          </button>
-          <button 
-            onClick={() => setActiveTab('pomodoro')}
-            className={`px-5 py-2.5 text-xs font-bold transition-all uppercase tracking-wider rounded-xl ${activeTab === 'pomodoro' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-700'}`}
-          >
-            Pomodoro Engine
-          </button>
+        
+        <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200 max-w-max self-start md:self-auto">
+          {[{ id: 'tasks', label: 'Task Queue' }, { id: 'focus', label: 'Focus Engine' }].map((tab) => (
+            <button
+              key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`relative px-6 py-2.5 text-xs font-bold transition-all uppercase tracking-wider ${activeTab === tab.id ? 'text-white' : 'text-slate-400 hover:text-slate-700'}`}
+            >
+              {activeTab === tab.id && <motion.div layoutId="activePlannerTab" className="absolute inset-0 bg-indigo-600 rounded-xl shadow-md shadow-indigo-100" transition={{ type: "spring", stiffness: 380, damping: 30 }} />}
+              <span className="relative z-10">{tab.label}</span>
+            </button>
+          ))}
         </div>
-      </div>
+      </motion.div>
 
       <AnimatePresence mode="wait">
-        {activeTab === 'tasks' ? (
-          <motion.div key="tasks" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* ── TAB 1: TASK QUEUE ── */}
+        {activeTab === 'tasks' && (
+          <motion.div key="tasks" variants={animContainer} initial="hidden" animate="visible" exit="hidden" className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            {/* Main Task Registry Queue Column */}
-            <div className="lg:col-span-2 bg-white p-6 lg:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
-              <div>
-                <h3 className="text-lg font-black tracking-tight text-slate-900">RL-Reshuffled Task Priority Stream</h3>
-                <p className="text-slate-400 text-xs font-semibold mt-1">The scheduler updates utility value curves and sorts operations based on dynamic performance gradients.</p>
-              </div>
-
-              <div className="space-y-3">
-                {tasks.map(task => (
-                  <div key={task.id} className={`p-4 rounded-2xl border flex items-center justify-between transition-all ${task.done ? 'bg-slate-50/80 border-slate-200/60 opacity-60' : 'bg-white border-slate-200 hover:border-indigo-200'}`}>
-                    <div className="flex items-center gap-4">
-                      <input 
-                        type="checkbox" 
-                        checked={task.done} 
-                        onChange={() => setTasks(tasks.map(t => t.id === task.id ? { ...t, done: !t.done } : t))}
-                        className="w-5 h-5 rounded-md border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600" 
-                      />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-slate-800">{task.topic}</span>
-                          <span className="text-[10px] font-black uppercase bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-indigo-600">{task.subject}</span>
-                        </div>
-                        <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1 mt-1"><Clock size={12}/> Target Block Allocation: {task.duration}</span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">+{task.reward} XP</span>
-                      <span className="text-[10px] text-slate-400 font-bold block mt-1 uppercase tracking-tight">{task.priority} Weight</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Gamification Metric Index Column */}
-            <div className="space-y-6">
-              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
-                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest block"><Award className="inline mr-1" size={14}/> Academic Gamification Profile</span>
-                <div className="flex items-center gap-4 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100/50">
-                  <Flame className="text-orange-500 fill-orange-500 animate-pulse" size={32} />
-                  <div>
-                    <h4 className="text-2xl font-black text-slate-900">5 Days</h4>
-                    <span className="text-xs font-bold text-slate-500">Continuous Logging Streak Index</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </motion.div>
-        ) : (
-          /* Pomodoro Engine Execution Interface Panel Sub-View */
-          <motion.div key="pomo" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            
-            {/* Left Column: Visual Countdown System Terminal */}
-            <div className="lg:col-span-5 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm text-center flex flex-col justify-center items-center space-y-8">
-              <div>
-                <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest">Workspace Core Timer</span>
-              </div>
-              <h2 className="text-7xl font-black tracking-tighter text-slate-900 font-mono select-none">{formatTime(timerSeconds)}</h2>
+            {/* Add Task Form */}
+            <div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6 self-start">
+              <h3 className="text-xl font-black tracking-tight flex items-center gap-2"><Plus className="text-indigo-600"/> New Task</h3>
               
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setIsTimerRunning(!isTimerRunning)} 
-                  className={`px-6 py-3 rounded-xl font-bold text-sm text-white shadow-md flex items-center gap-2 transition-all ${isTimerRunning ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-100' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'}`}
-                >
-                  {isTimerRunning ? <Pause size={16}/> : <Play size={16}/>} {isTimerRunning ? 'Pause Engine' : 'Start Focus Run'}
-                </button>
-                <button 
-                  onClick={() => { setIsTimerRunning(false); setTimerSeconds(1500); }} 
-                  className="p-3 border border-slate-200 hover:border-slate-300 bg-white rounded-xl text-slate-500 transition-colors"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              </div>
-            </div>
-
-            {/* Right Column: Database Storage Logger Management Terminal Form */}
-            <div className="lg:col-span-7 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-              <form onSubmit={handleLogStudySession} className="space-y-6">
+              <form onSubmit={handleAddTask} className="space-y-4">
                 <div>
-                  <h3 className="text-lg font-black tracking-tight text-slate-900">Commit Focus Analytics to Supabase</h3>
-                  <p className="text-slate-400 text-xs font-semibold mt-1">Saves active parameters directly to your live running database relational schema configurations.</p>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Subject</label>
+                  <input type="text" placeholder="e.g. DBMS" value={newTask.subject} onChange={e => setNewTask({...newTask, subject: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
                 </div>
-
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Topic / Description</label>
+                  <input type="text" placeholder="e.g. Read Chapter 4" value={newTask.topic} onChange={e => setNewTask({...newTask, topic: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-2">Subject Context</label>
-                    <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="w-full p-3 border border-slate-200 rounded-xl font-bold text-sm outline-none bg-white">
-                      <option>DBMS</option>
-                      <option>DSA</option>
-                      <option>OS</option>
-                      <option>CN</option>
-                      <option>MATH</option>
-                    </select>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Est. Duration</label>
+                    <input type="text" placeholder="30m" value={newTask.duration} onChange={e => setNewTask({...newTask, duration: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
+                  </div>
+                  
+                  {/* CUSTOM PRIORITY DROPDOWN */}
+                  <div className="relative">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Priority</label>
+                    <div 
+                      onClick={() => setIsPriorityOpen(!isPriorityOpen)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 flex justify-between items-center cursor-pointer hover:border-indigo-300 transition-colors"
+                    >
+                      {newTask.priority}
+                      <ChevronDown size={16} className={`text-slate-400 transition-transform ${isPriorityOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                    
+                    <AnimatePresence>
+                      {isPriorityOpen && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                          className="absolute top-[105%] left-0 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                        >
+                          {['High', 'Medium', 'Low'].map(p => (
+                            <div 
+                              key={p} 
+                              onClick={() => { setNewTask({...newTask, priority: p}); setIsPriorityOpen(false); }}
+                              className="p-3 text-sm font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 cursor-pointer transition-colors"
+                            >
+                              {p}
+                            </div>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  
+                </div>
+                <button type="submit" disabled={isAddingTask} className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-100 text-sm mt-2">
+                  {isAddingTask ? 'Adding...' : 'Add to Queue'}
+                </button>
+              </form>
+            </div>
+
+            {/* Task List */}
+            <div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+              <h3 className="text-xl font-black tracking-tight mb-6">Current Queue</h3>
+              
+              {loadingTasks ? (
+                <div className="animate-pulse text-slate-400 text-sm font-bold">Loading tasks...</div>
+              ) : tasks.length === 0 ? (
+                <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl">
+                  <Calendar className="mx-auto text-slate-300 mb-3" size={40} />
+                  <p className="text-slate-500 font-bold">No tasks in your queue.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {tasks.map(task => (
+                    <div key={task.id} className={`p-5 rounded-[1.5rem] border flex items-center justify-between transition-all ${task.done ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-sm'}`}>
+                      <div className="flex items-center gap-5">
+                        <button onClick={() => toggleTask(task)} className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-colors ${task.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 text-transparent hover:border-indigo-500'}`}>
+                          <CheckCircle size={16} />
+                        </button>
+                        <div>
+                          <h4 className={`text-base font-bold tracking-tight ${task.done ? 'line-through text-slate-400' : 'text-slate-800'}`}>{task.topic}</h4>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider bg-slate-100 px-2 py-0.5 rounded-md">{task.subject}</span>
+                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1"><Clock size={10}/> {task.duration}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {!task.done && (
+                           <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${
+                             task.priority === 'High' ? 'bg-rose-50 text-rose-600 border-rose-100' : task.priority === 'Medium' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-slate-50 text-slate-500 border-slate-200'
+                           }`}>{task.priority}</span>
+                        )}
+                        <button onClick={() => deleteTask(task.id)} className="text-slate-300 hover:text-rose-500 transition-colors p-2 bg-white hover:bg-rose-50 rounded-xl">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── TAB 2: FOCUS ENGINE ── */}
+        {activeTab === 'focus' && (
+          <motion.div key="focus" variants={animContainer} initial="hidden" animate="visible" exit="hidden" className="max-w-2xl mx-auto space-y-6">
+            
+            {/* The Timer */}
+            <div className="bg-white p-12 rounded-[3rem] border border-slate-200 shadow-sm text-center relative overflow-hidden">
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-64 bg-indigo-500 rounded-full blur-[100px] opacity-10" />
+              
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-8 relative z-10">Pomodoro Engine</span>
+              
+              <div className="text-[7rem] leading-none font-black text-slate-900 tracking-tighter mb-12 font-mono relative z-10">
+                {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}<span className="text-slate-300 mx-2">:</span>{String(timerSeconds % 60).padStart(2, '0')}
+              </div>
+
+              <div className="flex justify-center gap-6 relative z-10">
+                <button onClick={() => setIsTimerRunning(!isTimerRunning)} className="w-20 h-20 rounded-[1.5rem] bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:-translate-y-1 transition-all">
+                  {isTimerRunning ? <Pause size={32} /> : <Play size={32} className="ml-1.5" />}
+                </button>
+                <button onClick={() => { setIsTimerRunning(false); setTimerSeconds(1500); }} className="w-20 h-20 rounded-[1.5rem] bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100 flex items-center justify-center transition-colors">
+                  <RotateCcw size={28} />
+                </button>
+              </div>
+            </div>
+
+            {/* Save Session Form */}
+            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+              <h3 className="text-lg font-black tracking-tight mb-6">Log Session Record</h3>
+              <form onSubmit={handleSaveSession} className="space-y-5">
+                <div className="grid grid-cols-2 gap-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Subject</label>
+                    <input type="text" placeholder="e.g. DBMS" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-2">Self-Evaluated Focus Score</label>
-                    <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                      <Zap size={16} className="text-indigo-600"/>
-                      <input type="number" min="0" max="100" value={focusScore} onChange={e => setFocusScore(Number(e.target.value))} className="w-full bg-transparent font-black text-sm outline-none"/>
-                    </div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Focus Score (0-100)</label>
+                    <input type="number" min="0" max="100" value={focusScore} onChange={e => setFocusScore(Number(e.target.value))} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
                   </div>
                 </div>
-
                 <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-2">Focus Session Review Notes</label>
-                  <textarea rows="3" value={sessionNotes} onChange={e => setSessionNotes(e.target.value)} placeholder="Topics finalized, problem sets analyzed, model delta notes..." className="w-full p-4 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-all" />
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Notes</label>
+                  <textarea rows="2" value={sessionNotes} onChange={e => setSessionNotes(e.target.value)} placeholder="What did you accomplish?" className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
                 </div>
-
-                <button 
-                  type="submit" 
-                  disabled={isSubmitting}
-                  className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 transition-all disabled:opacity-50 text-sm"
-                >
-                  {isSubmitting ? 'Pushing Session Telemetry...' : 'Write Record to public.study_sessions'}
+                <button type="submit" disabled={isSubmitting} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-indigo-100 mt-2">
+                  {isSubmitting ? 'Logging to Database...' : 'Save Focus Record'}
                 </button>
               </form>
             </div>
@@ -230,7 +280,6 @@ export default function Planner() {
           </motion.div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }

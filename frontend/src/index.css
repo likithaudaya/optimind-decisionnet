@@ -7,8 +7,8 @@
   }
 
   body {
-    background-color: #0f0f1a;
-    color: #e2e8f0;
+    background-color: #f8fafc; /* Enterprise Clean Soft Gray */
+    color: #0f172a;            /* Deep Slate Text */
     font-family: 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }

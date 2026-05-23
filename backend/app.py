@@ -10,7 +10,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # Enable CORS to communicate securely with your React frontend server
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # ── LOAD THE TRAINED ML MODEL LAYER ──
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'risk_classifier.pkl')
@@ -87,9 +87,10 @@ def predict_academic_risk():
             "status": "error",
             "message": f"Failed to compute operational prediction matrix: {str(e)}"
         }), 400
-
-@app.route('/api/cortex/chat', methods=['POST'])
-def cortex_llm_stream():
+@app.route('/api/cortex', methods=['POST', 'OPTIONS'])
+def cortex_chat():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "preflight_cleared"}), 200
     """
     Connects directly to your locally running Ollama architecture 
     to process queries via the qwen2.5:3b model engine.
@@ -141,18 +142,6 @@ def cortex_llm_stream():
         }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": f"Pipeline failure: {str(e)}"}), 500
-def cortex_llm_stream():
-    """
-    Future home of your local Ollama / Qwen model orchestration endpoint.
-    """
-    data = request.json or {}
-    user_query = data.get("message", "")
-    return jsonify({
-        "status": "stub_active",
-        "response": f"Cortex received target query: '{user_query}'. Local LLM pipeline binding pending.",
-        "pipeline": "Mock Stream Active"
-    }), 200
-
 
 if __name__ == '__main__':
     # App running on standard internal development port 5000

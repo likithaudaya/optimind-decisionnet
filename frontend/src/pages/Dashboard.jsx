@@ -2,509 +2,268 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuthStore } from '../store/authStore'
-
-const mockSubjects = [
-  { name: 'Data Structures', marks: 82, attendance: 91, risk: 'Low', grade: 'A' },
-  { name: 'DBMS', marks: 64, attendance: 72, risk: 'High', grade: 'C+' },
-  { name: 'Operating Systems', marks: 75, attendance: 85, risk: 'Medium', grade: 'B+' },
-  { name: 'Computer Networks', marks: 88, attendance: 95, risk: 'Low', grade: 'A+' },
-  { name: 'Mathematics', marks: 70, attendance: 78, risk: 'Medium', grade: 'B' },
-]
-
-const weeklyStudy = [
-  { day: 'Mon', hours: 3.5 },
-  { day: 'Tue', hours: 2 },
-  { day: 'Wed', hours: 4.5 },
-  { day: 'Thu', hours: 1.5 },
-  { day: 'Fri', hours: 5 },
-  { day: 'Sat', hours: 3 },
-  { day: 'Sun', hours: 2.5 },
-]
-
-const recentActivity = [
-  { icon: '🧠', text: 'Cortex AI suggested 2 extra DBMS labs', time: '2h ago', color: '#6366f1' },
-  { icon: '📈', text: 'Opti Score initialized successfully', time: 'Just now', color: '#10b981' },
-  { icon: '⚠️', text: 'DBMS attendance below 75% threshold', time: '1d ago', color: '#f59e0b' },
-  { icon: '✅', text: 'Completed Networks assignment', time: '1d ago', color: '#10b981' },
-  { icon: '🎯', text: 'New study plan generated for this week', time: '2d ago', color: '#6366f1' },
-]
-
-const riskColor = { Low: '#10b981', Medium: '#f59e0b', High: '#ef4444' }
-const riskBg = { Low: '#f0fdf4', Medium: '#fffbeb', High: '#fef2f2' }
-const riskBorder = { Low: '#bbf7d0', Medium: '#fde68a', High: '#fecaca' }
+import { Plus, X, BrainCircuit, Activity } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { user, profile } = useAuthStore()
   
-  // We use a local state to force the UI to update the exact moment the data arrives
-  const [liveProfile, setLiveProfile] = useState(null)
+  const [liveProfile, setLiveProfile] = useState(profile)
   const [greeting, setGreeting] = useState('')
   const [time, setTime] = useState(new Date())
-  const maxBar = Math.max(...weeklyStudy.map(d => d.hours))
+  
+  // LIVE DATA STATES
+  const [subjects, setSubjects] = useState([])
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [newSubject, setNewSubject] = useState({ name: '', code: '', marks: '', attendance: '', assignments: '' })
+  const [isAdding, setIsAdding] = useState(false)
+
+  // 1. FETCH REAL DATA FROM SUPABASE
+  const fetchLiveSubjects = async () => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from('academic_records')
+      .select('*')
+      .eq('student_id', user.id)
+      .order('created_at', { ascending: true });
+      
+    if (data) setSubjects(data);
+    if (error) console.error("Error fetching subjects:", error);
+  }
 
   useEffect(() => {
-    async function secureProfileFetch() {
-      // 1. Force React to WAIT for Supabase to securely load the auth token into memory
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        // 2. Now that the token is active, fetch the profile using the confirmed ID
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-          
-        if (data) {
-          setLiveProfile(data); // Instantly updates the text on your screen
-          // Updates your global background store so the Planner & Finance pages work too
-          useAuthStore.setState({ profile: data, user: session.user });
-        }
-      }
-    }
-    secureProfileFetch();
-  }, []);
+    fetchLiveSubjects();
+    setLiveProfile(profile);
+  }, [user, profile]);
 
   useEffect(() => {
     const h = new Date().getHours()
     if (h < 12) setGreeting('Good morning')
     else if (h < 17) setGreeting('Good afternoon')
     else setGreeting('Good evening')
-
     const timer = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
 
-  // Safely extract the data or fall back to defaults while loading
+  // 2. INSERT NEW REAL SUBJECT TO SUPABASE
+  const handleAddSubject = async (e) => {
+    e.preventDefault();
+    if (!newSubject.name || !newSubject.code) {
+      return toast.error("Please fill out the subject name and code.");
+    }
+
+    setIsAdding(true);
+    try {
+      const { error } = await supabase
+        .from('academic_records')
+        .insert({
+          student_id: user.id,
+          subject_name: newSubject.name,
+          subject_code: newSubject.code.toUpperCase(),
+          marks: parseInt(newSubject.marks) || 0,
+          attendance: parseInt(newSubject.attendance) || 0,
+          assignments: parseInt(newSubject.assignments) || 0
+        });
+
+      if (error) throw error;
+      
+      toast.success("Subject safely recorded!");
+      setNewSubject({ name: '', code: '', marks: '', attendance: '', assignments: '' });
+      setIsModalOpen(false);
+      fetchLiveSubjects(); // Instantly refresh the UI!
+
+    } catch (err) {
+      toast.error(`Failed to add subject: ${err.message}`);
+    } finally {
+      setIsAdding(false);
+    }
+  }
+
+  // A quick helper to determine simple grade/risk on the frontend until we hit the ML model
+  const calcRisk = (marks, att) => (marks < 60 || att < 75) ? 'High' : (marks < 75 || att < 85) ? 'Medium' : 'Low';
+  const calcGrade = (marks) => marks >= 90 ? 'A+' : marks >= 80 ? 'A' : marks >= 70 ? 'B+' : marks >= 60 ? 'B' : 'C';
+
+  const avgMarks = subjects.length ? Math.round(subjects.reduce((acc, s) => acc + s.marks, 0) / subjects.length) : 0;
+  const avgAtt = subjects.length ? Math.round(subjects.reduce((acc, s) => acc + s.attendance, 0) / subjects.length) : 0;
+  const highRiskCount = subjects.filter(s => calcRisk(s.marks, s.attendance) === 'High').length;
+
   const optiScore = liveProfile?.opti_score ?? 0;
   const firstName = liveProfile?.full_name?.split(' ')[0] ?? 'Student';
   const initial = liveProfile?.full_name?.[0]?.toUpperCase() ?? 'S';
 
-  const scoreColor = optiScore >= 80 ? '#10b981' : optiScore >= 60 ? '#f59e0b' : '#ef4444'
-  const scoreBg = optiScore >= 80 ? '#f0fdf4' : optiScore >= 60 ? '#fffbeb' : '#fef2f2'
-
-  const card = {
-    background: '#fff',
-    border: '1px solid #e5e7eb',
-    borderRadius: '16px',
-    padding: '20px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-  }
-
   return (
-    <div style={{ fontFamily: "'Inter', -apple-system, sans-serif", color: '#111827', minHeight: '100vh', background: '#f8f9fc' }}>
+    <div className="font-['Inter'] text-slate-900 pb-12">
 
-      {/* ── Top bar ── */}
-      <div style={{
-        background: '#fff', borderBottom: '1px solid #e5e7eb',
-        padding: '16px 28px', display: 'flex',
-        alignItems: 'center', justifyContent: 'space-between',
-        position: 'sticky', top: 0, zIndex: 10
-      }}>
+      {/* TOP HEADER */}
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 style={{ fontSize: '18px', fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.3px' }}>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             {greeting}, {firstName} 👋
           </h1>
-          <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>
+          <p className="text-sm text-slate-500 font-medium mt-1">
             {time.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            {' · '}{time.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* Notification bell */}
-          <button style={{
-            width: '38px', height: '38px', borderRadius: '10px',
-            border: '1px solid #e5e7eb', background: '#fff',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', position: 'relative'
-          }}>
-            <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"
-                stroke="#6b7280" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span style={{
-              position: 'absolute', top: '8px', right: '8px',
-              width: '7px', height: '7px', borderRadius: '50%',
-              background: '#ef4444', border: '1.5px solid #fff'
-            }}/>
+        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center shadow-md shadow-indigo-200">
+          {initial}
+        </div>
+      </div>
+
+      {/* KPI CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        
+        {/* Opti Score */}
+        <div className="p-6 bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl text-white shadow-lg shadow-indigo-100 flex flex-col justify-between">
+          <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest mb-4">Opti Score™</p>
+          <div className="text-4xl font-black mb-2">{optiScore}<span className="text-lg opacity-60 font-medium">/100</span></div>
+          <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
+            <div className="bg-white h-full rounded-full" style={{ width: `${optiScore}%` }} />
+          </div>
+        </div>
+
+        {/* Avg Attendance */}
+        <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Avg Attendance</p>
+          <div className="text-3xl font-black text-slate-800">{avgAtt}<span className="text-lg text-slate-400 font-medium">%</span></div>
+          <p className={`text-xs font-bold mt-2 ${avgAtt >= 75 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            {avgAtt >= 75 ? '✓ Above minimum threshold' : '⚠ Below 75% boundary'}
+          </p>
+        </div>
+
+        {/* Avg Marks */}
+        <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Avg Marks</p>
+          <div className="text-3xl font-black text-slate-800">{avgMarks}<span className="text-lg text-slate-400 font-medium">%</span></div>
+          <p className="text-xs font-bold mt-2 text-indigo-500">Live aggregated metrics</p>
+        </div>
+
+        {/* Risk Alerts */}
+        <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">High-Risk Subjects</p>
+          <div className="text-3xl font-black text-slate-800">{highRiskCount}<span className="text-lg text-slate-400 font-medium"> / {subjects.length}</span></div>
+          <p className={`text-xs font-bold mt-2 ${highRiskCount === 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            {highRiskCount === 0 ? 'All subjects stable' : 'Requires immediate attention'}
+          </p>
+        </div>
+      </div>
+
+      {/* REAL ACADEMIC RECORDS TABLE */}
+      <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm p-6 lg:p-8">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Academic Records</h2>
+            <p className="text-sm text-slate-500 font-medium">Your live semester progression data</p>
+          </div>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-indigo-100 transition-colors"
+          >
+            <Plus size={16} /> Add Subject
           </button>
-          {/* Avatar */}
-          <div style={{
-            width: '38px', height: '38px', borderRadius: '10px',
-            background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '14px', fontWeight: 700, color: '#fff', cursor: 'pointer'
-          }}>
-            {initial}
-          </div>
         </div>
+
+        {subjects.length === 0 ? (
+          <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl">
+            <Activity className="mx-auto text-slate-300 mb-3" size={40} />
+            <h3 className="text-slate-600 font-bold mb-1">No subjects found</h3>
+            <p className="text-sm text-slate-400">Click "Add Subject" to begin tracking your performance.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-widest text-slate-400 font-bold">
+                  <th className="pb-4">Subject Name</th>
+                  <th className="pb-4">Code</th>
+                  <th className="pb-4">Marks</th>
+                  <th className="pb-4">Attendance</th>
+                  <th className="pb-4">Est. Grade</th>
+                  <th className="pb-4">Baseline Risk</th>
+                </tr>
+              </thead>
+              <tbody className="text-sm font-semibold text-slate-700 divide-y divide-slate-50">
+                {subjects.map((sub) => {
+                  const risk = calcRisk(sub.marks, sub.attendance);
+                  const grade = calcGrade(sub.marks);
+                  return (
+                    <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-4 text-slate-900 font-bold">{sub.subject_name}</td>
+                      <td className="py-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{sub.subject_code}</span></td>
+                      <td className="py-4">
+                        <div className="flex items-center gap-3">
+                          <span className="w-8">{sub.marks}%</span>
+                          <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.marks >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.marks}%` }} /></div>
+                        </div>
+                      </td>
+                      <td className="py-4">
+                        <div className="flex items-center gap-3">
+                          <span className="w-8">{sub.attendance}%</span>
+                          <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.attendance >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.attendance}%` }} /></div>
+                        </div>
+                      </td>
+                      <td className="py-4 font-black">{grade}</td>
+                      <td className="py-4">
+                        <span className={`px-2 py-1 rounded-md text-[10px] uppercase font-bold tracking-wider ${
+                          risk === 'Low' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 
+                          risk === 'Medium' ? 'bg-amber-50 text-amber-600 border border-amber-200' : 
+                          'bg-rose-50 text-rose-600 border border-rose-200'
+                        }`}>
+                          {risk}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* ── Main content ── */}
-      <div style={{ padding: '24px 28px', maxWidth: '1400px', margin: '0 auto' }}>
-
-        {/* ── Row 1: KPI cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
-
-          {/* Opti Score */}
-          <div style={{
-            ...card,
-            background: 'linear-gradient(135deg, #6366f1 0%, #4338ca 100%)',
-            border: 'none', color: '#fff'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.7, margin: '0 0 8px', letterSpacing: '0.05em' }}>
-                  OPTI SCORE™
-                </p>
-                <div style={{ fontSize: '40px', fontWeight: 800, letterSpacing: '-2px', lineHeight: 1 }}>
-                  {optiScore}
-                  <span style={{ fontSize: '16px', fontWeight: 400, opacity: 0.6 }}>/100</span>
-                </div>
-                <p style={{ fontSize: '12px', opacity: 0.7, margin: '6px 0 0' }}>Latest recorded score</p>
-              </div>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: 'rgba(255,255,255,0.15)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px'
-              }}>🎯</div>
-            </div>
-            {/* Score bar */}
-            <div style={{ marginTop: '16px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '99px' }}>
-              <div style={{ width: `${optiScore}%`, height: '100%', background: '#fff', borderRadius: '99px', transition: 'width 1s ease' }}/>
-            </div>
-          </div>
-
-          {/* Overall Attendance */}
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', margin: '0 0 8px', letterSpacing: '0.05em' }}>
-                  ATTENDANCE
-                </p>
-                <div style={{ fontSize: '36px', fontWeight: 800, color: '#111827', letterSpacing: '-1.5px', lineHeight: 1 }}>
-                  84<span style={{ fontSize: '16px', fontWeight: 400, color: '#9ca3af' }}>%</span>
-                </div>
-                <p style={{ fontSize: '12px', color: '#10b981', margin: '6px 0 0', fontWeight: 500 }}>✓ Above minimum</p>
-              </div>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: '#f0fdf4', border: '1px solid #bbf7d0',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px'
-              }}>📅</div>
-            </div>
-            <div style={{ marginTop: '16px', height: '4px', background: '#f3f4f6', borderRadius: '99px' }}>
-              <div style={{ width: '84%', height: '100%', background: '#10b981', borderRadius: '99px' }}/>
-            </div>
-          </div>
-
-          {/* Average Marks */}
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', margin: '0 0 8px', letterSpacing: '0.05em' }}>
-                  AVG. MARKS
-                </p>
-                <div style={{ fontSize: '36px', fontWeight: 800, color: '#111827', letterSpacing: '-1.5px', lineHeight: 1 }}>
-                  75<span style={{ fontSize: '16px', fontWeight: 400, color: '#9ca3af' }}>/100</span>
-                </div>
-                <p style={{ fontSize: '12px', color: '#f59e0b', margin: '6px 0 0', fontWeight: 500 }}>↑ +3 from last test</p>
-              </div>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: '#fffbeb', border: '1px solid #fde68a',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px'
-              }}>📊</div>
-            </div>
-            <div style={{ marginTop: '16px', height: '4px', background: '#f3f4f6', borderRadius: '99px' }}>
-              <div style={{ width: '75%', height: '100%', background: '#f59e0b', borderRadius: '99px' }}/>
-            </div>
-          </div>
-
-          {/* At-risk subjects */}
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 600, color: '#9ca3af', margin: '0 0 8px', letterSpacing: '0.05em' }}>
-                  AT-RISK SUBJECTS
-                </p>
-                <div style={{ fontSize: '36px', fontWeight: 800, color: '#111827', letterSpacing: '-1.5px', lineHeight: 1 }}>
-                  1<span style={{ fontSize: '16px', fontWeight: 400, color: '#9ca3af' }}> / 5</span>
-                </div>
-                <p style={{ fontSize: '12px', color: '#ef4444', margin: '6px 0 0', fontWeight: 500 }}>⚠ DBMS needs attention</p>
-              </div>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: '#fef2f2', border: '1px solid #fecaca',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px'
-              }}>🚨</div>
-            </div>
-            <div style={{ marginTop: '16px', height: '4px', background: '#f3f4f6', borderRadius: '99px' }}>
-              <div style={{ width: '20%', height: '100%', background: '#ef4444', borderRadius: '99px' }}/>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Row 2: Subjects + Activity ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '16px', marginBottom: '20px' }}>
-
-          {/* Subject table */}
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div>
-                <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: 0 }}>Subject Overview</h2>
-                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>Current semester performance</p>
-              </div>
-              <button
-                onClick={() => navigate('/intelligence')}
-                style={{
-                  fontSize: '12px', fontWeight: 500, color: '#6366f1',
-                  background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)',
-                  borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'
-                }}>
-                View predictions →
-              </button>
-            </div>
-
-            {/* Table header */}
-            <div style={{
-              display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 80px 80px',
-              gap: '8px', padding: '8px 12px',
-              background: '#f9fafb', borderRadius: '10px', marginBottom: '6px'
-            }}>
-              {['Subject', 'Marks', 'Attendance', 'Grade', 'Risk'].map(h => (
-                <div key={h} style={{ fontSize: '11px', fontWeight: 600, color: '#6b7280', letterSpacing: '0.04em' }}>{h}</div>
-              ))}
-            </div>
-
-            {/* Table rows */}
-            {mockSubjects.map((s, i) => (
-              <div key={i} style={{
-                display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 80px 80px',
-                gap: '8px', padding: '12px',
-                borderRadius: '10px', alignItems: 'center',
-                transition: 'background 0.15s',
-                cursor: 'pointer',
-                borderBottom: i < mockSubjects.length - 1 ? '1px solid #f3f4f6' : 'none'
-              }}
-                onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                <div style={{ fontSize: '13px', fontWeight: 500, color: '#111827' }}>{s.name}</div>
-
-                {/* Marks with mini bar */}
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#111827', marginBottom: '4px' }}>{s.marks}%</div>
-                  <div style={{ height: '3px', background: '#f3f4f6', borderRadius: '99px' }}>
-                    <div style={{
-                      width: `${s.marks}%`, height: '100%', borderRadius: '99px',
-                      background: s.marks >= 75 ? '#10b981' : s.marks >= 60 ? '#f59e0b' : '#ef4444'
-                    }}/>
-                  </div>
-                </div>
-
-                {/* Attendance with mini bar */}
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#111827', marginBottom: '4px' }}>{s.attendance}%</div>
-                  <div style={{ height: '3px', background: '#f3f4f6', borderRadius: '99px' }}>
-                    <div style={{
-                      width: `${s.attendance}%`, height: '100%', borderRadius: '99px',
-                      background: s.attendance >= 75 ? '#10b981' : '#ef4444'
-                    }}/>
-                  </div>
-                </div>
-
-                <div style={{
-                  fontSize: '13px', fontWeight: 700,
-                  color: s.marks >= 75 ? '#10b981' : s.marks >= 60 ? '#f59e0b' : '#ef4444'
-                }}>{s.grade}</div>
-
-                <div style={{
-                  fontSize: '11px', fontWeight: 600,
-                  color: riskColor[s.risk],
-                  background: riskBg[s.risk],
-                  border: `1px solid ${riskBorder[s.risk]}`,
-                  borderRadius: '6px', padding: '3px 8px',
-                  display: 'inline-block'
-                }}>{s.risk}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Recent Activity */}
-          <div style={card}>
-            <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>Recent Activity</h2>
-            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 16px' }}>Your latest updates</p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {recentActivity.map((a, i) => (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'flex-start', gap: '12px',
-                  padding: '10px 8px', borderRadius: '10px',
-                  transition: 'background 0.15s', cursor: 'default'
-                }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  <div style={{
-                    width: '34px', height: '34px', flexShrink: 0,
-                    borderRadius: '9px', fontSize: '16px',
-                    background: `${a.color}12`,
-                    border: `1px solid ${a.color}25`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>{a.icon}</div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: '12.5px', color: '#374151', margin: '0 0 2px', lineHeight: 1.4, fontWeight: 500 }}>{a.text}</p>
-                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>{a.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button
-              onClick={() => navigate('/cortex')}
-              style={{
-                width: '100%', marginTop: '12px', padding: '11px',
-                background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                border: 'none', borderRadius: '10px', color: '#fff',
-                fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-                boxShadow: '0 4px 12px rgba(99,102,241,0.3)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
-              }}>
-              🧠 Ask Cortex AI
+      {/* ── ADD SUBJECT MODAL OVERLAY ── */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2rem] p-8 w-full max-w-md shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-600">
+              <X size={20} />
             </button>
-          </div>
-        </div>
+            <h3 className="text-xl font-bold text-slate-900 mb-1">Add New Subject</h3>
+            <p className="text-xs text-slate-500 font-medium mb-6">Enter your current scores. If you don't know your final marks yet, enter your <strong>expected</strong> or <strong>target</strong> scores to calculate your current risk!</p>
 
-        {/* ── Row 3: Study chart + Quick actions + Wellness ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 300px', gap: '16px' }}>
-
-          {/* Weekly study bar chart */}
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <form onSubmit={handleAddSubject} className="space-y-4">
               <div>
-                <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: 0 }}>Weekly Study Hours</h2>
-                <p style={{ fontSize: '12px', color: '#9ca3af', margin: '2px 0 0' }}>This week · 21.5 hrs total</p>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Subject Name</label>
+                <input type="text" placeholder="e.g. Database Management" value={newSubject.name} onChange={e => setNewSubject({...newSubject, name: e.target.value})} className="w-full p-3 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
               </div>
-              <span style={{
-                fontSize: '11px', fontWeight: 600, color: '#6366f1',
-                background: 'rgba(99,102,241,0.08)', borderRadius: '6px',
-                padding: '4px 10px'
-              }}>This week</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '120px' }}>
-              {weeklyStudy.map((d, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', height: '100%', justifyContent: 'flex-end' }}>
-                  <span style={{ fontSize: '10px', color: '#9ca3af', fontWeight: 500 }}>{d.hours}h</span>
-                  <div style={{
-                    width: '100%', borderRadius: '6px 6px 0 0',
-                    height: `${(d.hours / maxBar) * 90}px`,
-                    background: d.day === 'Fri'
-                      ? 'linear-gradient(180deg, #6366f1, #4f46e5)'
-                      : '#e5e7eb',
-                    transition: 'height 0.5s ease',
-                    cursor: 'pointer',
-                    minHeight: '8px'
-                  }}
-                    onMouseEnter={e => { if (d.day !== 'Fri') e.currentTarget.style.background = '#c7d2fe' }}
-                    onMouseLeave={e => { if (d.day !== 'Fri') e.currentTarget.style.background = '#e5e7eb' }}
-                  />
-                  <span style={{ fontSize: '11px', color: d.day === 'Fri' ? '#6366f1' : '#9ca3af', fontWeight: d.day === 'Fri' ? 700 : 400 }}>{d.day}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div style={card}>
-            <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>Quick Actions</h2>
-            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 16px' }}>Jump to what matters most</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              {[
-                { icon: '🧠', label: 'Risk Prediction', sub: 'Check at-risk subjects', path: '/intelligence', color: '#6366f1', bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.15)' },
-                { icon: '📅', label: 'Study Planner', sub: 'View today\'s schedule', path: '/planner', color: '#10b981', bg: '#f0fdf4', border: '#bbf7d0' },
-                { icon: '💬', label: 'Cortex AI', sub: 'Get personalized advice', path: '/cortex', color: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' },
-                { icon: '💳', label: 'Fee Status', sub: 'Check pending payments', path: '/finance', color: '#f59e0b', bg: '#fffbeb', border: '#fde68a' },
-              ].map(a => (
-                <button key={a.label} onClick={() => navigate(a.path)} style={{
-                  padding: '14px', borderRadius: '12px', textAlign: 'left',
-                  border: `1px solid ${a.border}`,
-                  background: a.bg, cursor: 'pointer',
-                  transition: 'all 0.15s'
-                }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)' }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none' }}
-                >
-                  <div style={{ fontSize: '22px', marginBottom: '8px' }}>{a.icon}</div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: a.color, marginBottom: '2px' }}>{a.label}</div>
-                  <div style={{ fontSize: '11px', color: '#9ca3af' }}>{a.sub}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Wellness + Streak */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-            {/* Study streak */}
-            <div style={{
-              ...card,
-              background: 'linear-gradient(135deg, #fef3c7, #fde68a)',
-              border: '1px solid #fcd34d'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ fontSize: '32px' }}>🔥</div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div style={{ fontSize: '24px', fontWeight: 800, color: '#92400e', letterSpacing: '-1px' }}>7 days</div>
-                  <div style={{ fontSize: '12px', color: '#b45309', fontWeight: 500 }}>Study streak — keep it up!</div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Subject Code</label>
+                  <input type="text" placeholder="e.g. DBMS" value={newSubject.code} onChange={e => setNewSubject({...newSubject, code: e.target.value})} className="w-full p-3 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Avg. Assignment Score (%)</label>
+                  <input type="number" min="0" max="100" placeholder="e.g. 85" value={newSubject.assignments} onChange={e => setNewSubject({...newSubject, assignments: e.target.value})} className="w-full p-3 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
                 </div>
               </div>
-            </div>
-
-            {/* Today's wellness */}
-            <div style={card}>
-              <h2 style={{ fontSize: '14px', fontWeight: 700, color: '#111827', margin: '0 0 12px' }}>
-                Today's Wellness Check
-              </h2>
-              <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 12px' }}>How are you feeling?</p>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                {['😴', '😟', '😐', '😊', '🤩'].map((emoji, i) => (
-                  <button key={i} style={{
-                    width: '40px', height: '40px', borderRadius: '10px',
-                    border: '1.5px solid #e5e7eb', background: '#f9fafb',
-                    fontSize: '20px', cursor: 'pointer', transition: 'all 0.15s'
-                  }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#6366f1'; e.currentTarget.style.background = 'rgba(99,102,241,0.06)'; e.currentTarget.style.transform = 'scale(1.1)' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.background = '#f9fafb'; e.currentTarget.style.transform = 'scale(1)' }}
-                  >{emoji}</button>
-                ))}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Marks (0-100)</label>
+                  <input type="number" min="0" max="100" placeholder="0" value={newSubject.marks} onChange={e => setNewSubject({...newSubject, marks: e.target.value})} className="w-full p-3 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Attendance (0-100)</label>
+                  <input type="number" min="0" max="100" placeholder="0" value={newSubject.attendance} onChange={e => setNewSubject({...newSubject, attendance: e.target.value})} className="w-full p-3 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 transition-colors" />
+                </div>
               </div>
-            </div>
-
-            {/* Semester progress */}
-            <div style={card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h2 style={{ fontSize: '14px', fontWeight: 700, color: '#111827', margin: 0 }}>Semester Progress</h2>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#6366f1' }}>68%</span>
-              </div>
-              <div style={{ height: '6px', background: '#f3f4f6', borderRadius: '99px', overflow: 'hidden' }}>
-                <div style={{
-                  width: '68%', height: '100%', borderRadius: '99px',
-                  background: 'linear-gradient(90deg, #6366f1, #4f46e5)'
-                }}/>
-              </div>
-              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '8px 0 0' }}>
-                ~6 weeks remaining in this semester
-              </p>
-            </div>
+              <button type="submit" disabled={isAdding} className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-xl mt-6 transition-colors shadow-md shadow-indigo-100">
+                {isAdding ? 'Saving to Database...' : 'Save Academic Record'}
+              </button>
+            </form>
           </div>
         </div>
-      </div>
+      )}
 
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        * { box-sizing: border-box; }
-      `}</style>
     </div>
   )
 }
