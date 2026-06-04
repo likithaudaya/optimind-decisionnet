@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuthStore } from '../store/authStore'
-import { Plus, X, BrainCircuit, Activity } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+  Plus, X, BrainCircuit, Activity, Sparkles, 
+  Clock, BookmarkCheck, CalendarDays, AlertTriangle 
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function Dashboard() {
@@ -18,8 +22,14 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [newSubject, setNewSubject] = useState({ name: '', code: '', marks: '', attendance: '', assignments: '' })
   const [isAdding, setIsAdding] = useState(false)
+  const [dynamicOptiScore, setDynamicOptiScore] = useState(0)
 
-  // 1. FETCH REAL DATA FROM SUPABASE
+  // ─── STATES FOR THE AI STUDY PLAN TIMELINE ───
+  const [timeline, setTimeline] = useState([])
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [isSavingTasks, setIsSavingTasks] = useState(false)
+
+  // 1. FETCH REAL DATA FROM SUPABASE & RUN SYNCHRONIZED CALCULATION
   const fetchLiveSubjects = async () => {
     if (!user) return;
     const { data, error } = await supabase
@@ -28,7 +38,43 @@ export default function Dashboard() {
       .eq('student_id', user.id)
       .order('created_at', { ascending: true });
       
-    if (data) setSubjects(data);
+    if (data) {
+      setSubjects(data);
+      
+      // Calculate dynamic indicators immediately if data records are found
+      if (data.length > 0) {
+        const totalMarks = data.reduce((acc, s) => acc + (s.marks || 0), 0);
+        const totalAttendance = data.reduce((acc, s) => acc + (s.attendance || 0), 0);
+        const totalAssignments = data.reduce((acc, s) => acc + (s.assignments || 0), 0);
+        
+        const calculatedAvgMarks = totalMarks / data.length;
+        const calculatedAvgAtt = totalAttendance / data.length;
+        const calculatedAvgAss = totalAssignments / data.length;
+
+        // Apply project weighted criteria formula (40% Marks + 30% Attendance + 30% Assignments)
+        const computedOptiScore = Math.round(
+          (calculatedAvgMarks * 0.4) + 
+          (calculatedAvgAtt * 0.3) + 
+          (calculatedAvgAss * 0.3)
+        );
+
+        setDynamicOptiScore(computedOptiScore);
+
+        // Sync calculation coordinates back down to profiles table asynchronously if different
+        if (computedOptiScore !== liveProfile?.opti_score) {
+          try {
+            await supabase
+              .from('profiles')
+              .update({ opti_score: computedOptiScore })
+              .eq('id', user.id);
+          } catch (syncErr) {
+            console.error("Database cloud latency sync aborted:", syncErr);
+          }
+        }
+      } else {
+        setDynamicOptiScore(0);
+      }
+    }
     if (error) console.error("Error fetching subjects:", error);
   }
 
@@ -71,7 +117,7 @@ export default function Dashboard() {
       toast.success("Subject safely recorded!");
       setNewSubject({ name: '', code: '', marks: '', attendance: '', assignments: '' });
       setIsModalOpen(false);
-      fetchLiveSubjects(); // Instantly refresh the UI!
+      fetchLiveSubjects(); // Instantly calculate new Opti Score and refresh UI!
 
     } catch (err) {
       toast.error(`Failed to add subject: ${err.message}`);
@@ -80,7 +126,72 @@ export default function Dashboard() {
     }
   }
 
-  // A quick helper to determine simple grade/risk on the frontend until we hit the ML model
+  // ─── CALL LOCAL PYTHON AI ENDPOINT TO TRIGGER GENERATION ───
+  const handleGenerateTimeline = async () => {
+    if (!user?.id) {
+      return toast.error("Authentication token loading. Please wait a moment.");
+    }
+    
+    setIsGenerating(true)
+    const toastId = toast.loading("Cortex is compiling your data-aware academic risks...")
+    
+    try {
+      const baseUrl = import.meta.env.VITE_FLASK_API_URL || 'http://localhost:5000'
+      const response = await fetch(`${baseUrl}/api/planner/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: user.id })
+      })
+
+      if (!response.ok) throw new Error("Backend pipeline optimization failed.")
+      const data = await response.json()
+      
+      if (Array.isArray(data)) {
+        setTimeline(data)
+        toast.success("7-Day Proactive Timeline generated successfully!", { id: toastId })
+      } else {
+        throw new Error("Returned structure does not meet standard array dimensions.")
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error("Failed to build timeline. Verify that your Flask app.py server is active.", { id: toastId })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  // ─── INJECT REC CARD CONTENT DIRECTLY INTO STUDY_TASKS LEDGER ───
+  const handleAcceptSchedule = async () => {
+    if (timeline.length === 0) return;
+    setIsSavingTasks(true);
+    const toastId = toast.loading("Injecting schedule items directly to your workspace database...");
+
+    try {
+      const tasksToInsert = timeline.map(item => ({
+        student_id: user.id,
+        subject: item.subject,
+        topic: item.topic,
+        duration: item.duration,
+        priority: item.priority || 'Medium',
+        done: false
+      }));
+
+      const { error } = await supabase
+        .from('study_tasks')
+        .insert(tasksToInsert);
+
+      if (error) throw error;
+
+      toast.success("All 7 tasks synchronized with your Study Planner! 🎉", { id: toastId, duration: 4000 });
+      setTimeline([]); 
+    } catch (err) {
+      console.error(err);
+      toast.error("Database cloud latency sync aborted. Try again.", { id: toastId });
+    } finally {
+      setIsSavingTasks(false);
+    }
+  };
+
   const calcRisk = (marks, att) => (marks < 60 || att < 75) ? 'High' : (marks < 75 || att < 85) ? 'Medium' : 'Low';
   const calcGrade = (marks) => marks >= 90 ? 'A+' : marks >= 80 ? 'A' : marks >= 70 ? 'B+' : marks >= 60 ? 'B' : 'C';
 
@@ -88,15 +199,13 @@ export default function Dashboard() {
   const avgAtt = subjects.length ? Math.round(subjects.reduce((acc, s) => acc + s.attendance, 0) / subjects.length) : 0;
   const highRiskCount = subjects.filter(s => calcRisk(s.marks, s.attendance) === 'High').length;
 
-  const optiScore = liveProfile?.opti_score ?? 0;
   const firstName = liveProfile?.full_name?.split(' ')[0] ?? 'Student';
-  const initial = liveProfile?.full_name?.[0]?.toUpperCase() ?? 'S';
 
   return (
-    <div className="font-['Inter'] text-slate-900 pb-12">
+    <div className="font-['Inter'] text-slate-900 pb-12 max-w-7xl mx-auto px-1">
 
-      {/* TOP HEADER */}
-      <div className="flex items-center justify-between mb-8">
+      {/* TOP HEADER ELEMENT BANNER */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8 bg-white border border-slate-200 p-8 rounded-[2rem] shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             {greeting}, {firstName} 👋
@@ -105,24 +214,135 @@ export default function Dashboard() {
             {time.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center shadow-md shadow-indigo-200">
-          {initial}
-        </div>
+        
+        <button
+          onClick={handleGenerateTimeline}
+          disabled={isGenerating}
+          className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-5 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-60 cursor-pointer shadow-md"
+        >
+          {isGenerating ? (
+            <>
+              <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Optimizing Variables...
+            </>
+          ) : (
+            <>
+              <Sparkles size={14} className="text-indigo-400 animate-pulse" />
+              Generate AI Study Plan
+            </>
+          )}
+        </button>
       </div>
 
-      {/* KPI CARDS */}
+      {/* ─── 7-DAY VISUAL SUBJECT-BRANDED TIMELINE COMPONENT ─── */}
+      <AnimatePresence>
+        {timeline.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            className="bg-white border border-slate-200 rounded-[2rem] p-6 lg:p-8 shadow-sm mb-8 space-y-6"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+              <div className="space-y-0.5">
+                <h2 className="text-base font-black tracking-tight flex items-center gap-2 text-slate-900 uppercase">
+                  <BrainCircuit className="text-indigo-600 animate-pulse" size={18} /> Proactive Core Trajectory Schedule
+                </h2>
+                <p className="text-xs text-slate-400 font-medium">
+                  Cortex system has analyzed your current risk balances and compiled targeted study concepts.
+                </p>
+              </div>
+              
+              <button
+                onClick={handleAcceptSchedule}
+                disabled={isSavingTasks}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer shadow-md shadow-indigo-100"
+              >
+                {isSavingTasks ? (
+                  <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                ) : <BookmarkCheck size={14} />}
+                Accept & Inject Tasks
+              </button>
+            </div>
+
+            {/* Timeline Multi-Card Layout Grid Container */}
+            <div className="grid grid-cols-1 md:grid-cols-7 gap-4 pt-1">
+              {timeline.map((item, index) => {
+                // DYNAMIC SUBJECT BRANDING SELECTION TREE
+                const subjectToken = item.subject?.toUpperCase() || '';
+                
+                let colorClasses = 'border-slate-200 bg-slate-50/40 shadow-sm';
+                let badgeClasses = 'bg-slate-200 text-slate-600';
+
+                if (subjectToken.includes('ECD') || subjectToken.includes('ELECTRONIC')) {
+                  colorClasses = 'border-rose-300 bg-rose-50/30 ring-1 ring-rose-100/40 shadow-md shadow-rose-50/10';
+                  badgeClasses = 'bg-rose-100 text-rose-700 font-bold';
+                } else if (subjectToken.includes('ST') || subjectToken.includes('SOFTWARE TESTING')) {
+                  colorClasses = 'border-amber-300 bg-amber-50/30 ring-1 ring-amber-100/40 shadow-md shadow-amber-50/10';
+                  badgeClasses = 'bg-amber-100 text-amber-700 font-bold';
+                } else if (subjectToken.includes('ML') || subjectToken.includes('MACHINE')) {
+                  colorClasses = 'border-emerald-300 bg-emerald-50/30 ring-1 ring-emerald-100/40 shadow-md shadow-emerald-50/10';
+                  badgeClasses = 'bg-emerald-100 text-emerald-700 font-bold';
+                } else if (subjectToken.includes('MAD') || subjectToken.includes('MOBILE')) {
+                  colorClasses = 'border-purple-300 bg-purple-50/30 ring-1 ring-purple-100/40 shadow-md shadow-purple-50/10';
+                  badgeClasses = 'bg-purple-100 text-purple-700 font-bold';
+                }
+
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: index * 0.04 }}
+                    key={index}
+                    className={`p-4 rounded-xl border flex flex-col justify-between transition-all relative ${colorClasses}`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                          <CalendarDays size={10} className="text-slate-400" /> {item.day}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase tracking-wider ${badgeClasses}`}>
+                          {item.priority || 'Medium'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-black text-slate-900 truncate" title={item.subject}>
+                          {item.subject}
+                        </h4>
+                        <p className="text-[11px] text-slate-600 font-medium line-clamp-2 leading-relaxed">
+                          {item.topic}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 text-[9px] text-slate-400 font-black uppercase tracking-wider pt-3 mt-4 border-t border-slate-100">
+                      <Clock size={10} /> {item.duration || '45 mins'}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* KPI CARDS METRIC PANEL */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        
-        {/* Opti Score */}
         <div className="p-6 bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl text-white shadow-lg shadow-indigo-100 flex flex-col justify-between">
           <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest mb-4">Opti Score™</p>
-          <div className="text-4xl font-black mb-2">{optiScore}<span className="text-lg opacity-60 font-medium">/100</span></div>
+          <div className="text-4xl font-black mb-2">{dynamicOptiScore}<span className="text-lg opacity-60 font-medium">/100</span></div>
           <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
-            <div className="bg-white h-full rounded-full" style={{ width: `${optiScore}%` }} />
+            <div className="bg-white h-full rounded-full transition-all duration-500" style={{ width: `${dynamicOptiScore}%` }} />
           </div>
         </div>
 
-        {/* Avg Attendance */}
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Avg Attendance</p>
           <div className="text-3xl font-black text-slate-800">{avgAtt}<span className="text-lg text-slate-400 font-medium">%</span></div>
@@ -131,14 +351,12 @@ export default function Dashboard() {
           </p>
         </div>
 
-        {/* Avg Marks */}
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Avg Marks</p>
           <div className="text-3xl font-black text-slate-800">{avgMarks}<span className="text-lg text-slate-400 font-medium">%</span></div>
           <p className="text-xs font-bold mt-2 text-indigo-500">Live aggregated metrics</p>
         </div>
 
-        {/* Risk Alerts */}
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col justify-between hover:shadow-md transition-all">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">High-Risk Subjects</p>
           <div className="text-3xl font-black text-slate-800">{highRiskCount}<span className="text-lg text-slate-400 font-medium"> / {subjects.length}</span></div>
@@ -167,7 +385,7 @@ export default function Dashboard() {
           <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl">
             <Activity className="mx-auto text-slate-300 mb-3" size={40} />
             <h3 className="text-slate-600 font-bold mb-1">No subjects found</h3>
-            <p className="text-sm text-slate-400">Click "Add Subject" to begin tracking your performance.</p>
+            <p className="text-sm text-slate-400">Click \"Add Subject\" to begin tracking your performance.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

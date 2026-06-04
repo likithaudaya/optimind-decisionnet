@@ -5,13 +5,14 @@ import {
   Wallet, MessageSquare, ShieldCheck, LogOut
 } from 'lucide-react'
 
+// 1. Added an "adminOnly" flag to the Admin Portal route
 const navItems = [
-  { to: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard'        },
+  { to: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/intelligence', icon: BrainCircuit,    label: 'Intelligence Hub' },
-  { to: '/planner',      icon: CalendarDays,    label: 'Study Planner'    },
-  { to: '/finance',      icon: Wallet,          label: 'Finance Center'   },
-  { to: '/cortex',       icon: MessageSquare,   label: 'Cortex AI'        },
-  { to: '/admin',        icon: ShieldCheck,     label: 'Admin Portal'     },
+  { to: '/planner',      icon: CalendarDays,    label: 'Study Planner' },
+  { to: '/finance',      icon: Wallet,          label: 'Finance Center' },
+  { to: '/cortex',       icon: MessageSquare,   label: 'Cortex AI' },
+  { to: '/admin',        icon: ShieldCheck,     label: 'Admin Portal', adminOnly: true }, 
 ]
 
 export default function Sidebar() {
@@ -59,25 +60,34 @@ export default function Sidebar() {
           Main Menu
         </div>
         
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            style={({ isActive }) => ({
-              display: 'flex', alignItems: 'center', gap: '12px',
-              padding: '10px 12px', borderRadius: '10px',
-              fontSize: '14px', fontWeight: 600, textDecoration: 'none',
-              color: isActive ? '#4f46e5' : '#64748b',
-              background: isActive ? '#eef2ff' : 'transparent',
-              transition: 'all 0.15s ease'
-            })}
-            onMouseEnter={e => { if (e.currentTarget.style.background === 'transparent') e.currentTarget.style.background = '#f8fafc' }}
-            onMouseLeave={e => { if (e.currentTarget.style.color === 'rgb(100, 116, 139)') e.currentTarget.style.background = 'transparent' }}
-          >
-            <Icon size={18} strokeWidth={2.5} />
-            {label}
-          </NavLink>
-        ))}
+        {/* 2. The Filter Logic */}
+        {navItems.map(({ to, icon: Icon, label, adminOnly }) => {
+          
+          // If the button is for admins only, and the profile is missing or NOT an admin, return nothing (hide it)
+          if (adminOnly && profile?.role !== 'admin') {
+            return null;
+          }
+
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              style={({ isActive }) => ({
+                display: 'flex', alignItems: 'center', gap: '12px',
+                padding: '10px 12px', borderRadius: '10px',
+                fontSize: '14px', fontWeight: 600, textDecoration: 'none',
+                color: isActive ? '#4f46e5' : '#64748b',
+                background: isActive ? '#eef2ff' : 'transparent',
+                transition: 'all 0.15s ease'
+              })}
+              onMouseEnter={e => { if (e.currentTarget.style.background === 'transparent') e.currentTarget.style.background = '#f8fafc' }}
+              onMouseLeave={e => { if (e.currentTarget.style.color === 'rgb(100, 116, 139)') e.currentTarget.style.background = 'transparent' }}
+            >
+              <Icon size={18} strokeWidth={2.5} />
+              {label}
+            </NavLink>
+          )
+        })}
       </nav>
 
       {/* User Profile & Logout */}
