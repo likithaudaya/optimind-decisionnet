@@ -9,7 +9,7 @@ import {
 import { 
   BrainCircuit, Calculator, AlertCircle, CheckCircle2, 
   Activity, Database, UploadCloud, FileText, Send, 
-  Sparkles, HelpCircle, Target, Clock, AlertTriangle
+  Sparkles, HelpCircle, Target, Clock, AlertTriangle, MessageSquare, GraduationCap, XCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -21,7 +21,6 @@ const riskConfig = {
 
 const gradePoints = { 'A+': 10, 'A': 9, 'B+': 8, 'B': 7, 'C+': 6, 'C': 5, 'D': 4, 'F': 0 };
 
-// Base algorithms for fallback
 function predictGradeLocal(marks, attendance, assignments) {
   const score = (marks * 0.5) + (attendance * 0.3) + (assignments * 0.2);
   if (score >= 90) return 'A+';
@@ -49,8 +48,6 @@ export default function Intelligence() {
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSubject, setSelectedSubject] = useState(null);
-
-  // MATRIX ENGINE STATES (AI TASKS)
   const [planTasks, setPlanTasks] = useState([]);
 
   // SIMULATOR STATES
@@ -63,36 +60,38 @@ export default function Intelligence() {
   const [mlConfidence, setMlConfidence] = useState(null);
   const [isApiConnected, setIsApiConnected] = useState(false);
 
-  // === ACADEMIC VAULT CHAT STATES ===
+  // === ACADEMIC VAULT STATES ===
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [vaultStats, setVaultStats] = useState({ indexed: 0, filename: '' });
+  
+  // CHAT MODE STATES
+  const [sandboxMode, setSandboxMode] = useState('chat');
   const [query, setQuery] = useState('');
   const [isQuerying, setIsQuerying] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const chatEndRef = useRef(null);
 
+  // QUIZ MODE STATES
+  const [quizData, setQuizData] = useState(null);
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [currentQIndex, setCurrentQIndex] = useState(0);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [isAnswerRevealed, setIsAnswerRevealed] = useState(false);
+  const [quizScore, setQuizScore] = useState(0);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isQuerying]);
 
-  // 1. FETCH REAL SUBJECTS FROM SUPABASE
   useEffect(() => {
     async function fetchSubjects() {
       if (!user) return;
       try {
-        const { data, error } = await supabase
-          .from('academic_records')
-          .select('*')
-          .eq('student_id', user.id)
-          .order('created_at', { ascending: true });
-        
+        const { data, error } = await supabase.from('academic_records').select('*').eq('student_id', user.id).order('created_at', { ascending: true });
         if (error) throw error;
-        
         setSubjects(data || []);
-        if (data && data.length > 0) {
-          setSelectedSubject(data[0]);
-        }
+        if (data && data.length > 0) setSelectedSubject(data[0]);
       } catch (err) {
         console.error("Failed to load records:", err);
       } finally {
@@ -102,19 +101,12 @@ export default function Intelligence() {
     fetchSubjects();
   }, [user]);
 
-  // 1B. FETCH AI GENERATED TASKS FOR THE WORKLOAD CHART
   useEffect(() => {
     async function fetchMatrixTasks() {
       if (!user) return;
       try {
-        const { data, error } = await supabase
-          .from('study_tasks')
-          .select('*')
-          .eq('student_id', user.id)
-          .eq('done', false);
-
+        const { data, error } = await supabase.from('study_tasks').select('*').eq('student_id', user.id).eq('done', false);
         if (error) throw error;
-        
         if (data) {
           const formattedTasks = data.map((task) => {
             const subjectCode = task.subject.split('-')[0].trim() || 'Task';
@@ -127,11 +119,8 @@ export default function Intelligence() {
               const match = dur.match(/([\d.]+)/);
               if (match) minutes = parseFloat(match[1]) * 60;
             }
-
             return { ...task, minutes, subjectCode };
           });
-
-          // Sort by Priority (High -> Low), then by Duration (Longest -> Shortest)
           const priorityWeight = { high: 3, medium: 2, low: 1 };
           formattedTasks.sort((a, b) => {
             const pA = priorityWeight[a.priority?.toLowerCase()] || 0;
@@ -139,7 +128,6 @@ export default function Intelligence() {
             if (pA !== pB) return pB - pA; 
             return b.minutes - a.minutes; 
           });
-
           setPlanTasks(formattedTasks);
         }
       } catch (err) {
@@ -149,7 +137,6 @@ export default function Intelligence() {
     fetchMatrixTasks();
   }, [user]);
 
-  // Sync simulator sliders when subject changes
   useEffect(() => {
     if (selectedSubject) {
       setSimMarks(selectedSubject.marks);
@@ -158,7 +145,6 @@ export default function Intelligence() {
     }
   }, [selectedSubject]);
 
-  // 2. THE PYTHON MACHINE LEARNING PIPELINE
   const fetchLiveMLPrediction = async (marks, attendance, assignments) => {
     try {
       const response = await fetch(`${import.meta.env.VITE_FLASK_API_URL || 'http://localhost:5000'}/api/predict-risk`, {
@@ -181,22 +167,32 @@ export default function Intelligence() {
 
   useEffect(() => {
     if (selectedSubject) {
-      const delay = setTimeout(() => {
-        fetchLiveMLPrediction(simMarks, simAttendance, simAssignments);
-      }, 300); 
+      const delay = setTimeout(() => { fetchLiveMLPrediction(simMarks, simAttendance, simAssignments); }, 300); 
       return () => clearTimeout(delay);
     }
   }, [simMarks, simAttendance, simAssignments, selectedSubject]);
 
-  // === VAULT UPLOAD FUNCTION ===
+  
   const handleFileUpload = async (e) => {
     const uploadedFile = e.target.files[0];
-    if (!uploadedFile || uploadedFile.type !== 'application/pdf') return toast.error('Please upload a valid PDF document.');
+    e.target.value = null; 
+
+    if (!uploadedFile) return;
+
+    if (uploadedFile.type !== 'application/pdf' && !uploadedFile.name.toLowerCase().endsWith('.pdf')) {
+      return toast.error('Please upload a valid PDF document.');
+    }
+
+    if (!user || !user.id) {
+      return toast.error('Authentication error. Please log in again.');
+    }
+
     setFile(uploadedFile);
     setIsUploading(true);
 
     const formData = new FormData();
     formData.append('file', uploadedFile);
+    formData.append('student_id', user.id); 
 
     try {
       const baseUrl = import.meta.env.VITE_FLASK_API_URL || 'http://localhost:5000';
@@ -204,9 +200,10 @@ export default function Intelligence() {
       const data = await response.json();
 
       if (!response.ok) throw new Error(data.error || 'Upload failed');
-      toast.success(`${uploadedFile.name} indexed into AI Memory!`);
+      toast.success(`${uploadedFile.name} securely indexed into Cloud Memory!`);
       setVaultStats({ indexed: data.total_indexed_chunks, filename: uploadedFile.name });
     } catch (err) {
+      console.error("Upload Error:", err);
       toast.error(err.message);
       setFile(null);
     } finally {
@@ -214,7 +211,6 @@ export default function Intelligence() {
     }
   };
 
-  // === VAULT QUERY (CHAT INTERFACE) ===
   const handleQuerySubmit = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -229,17 +225,12 @@ export default function Intelligence() {
       const response = await fetch(`${baseUrl}/api/vault/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: currentQuery }),
+        body: JSON.stringify({ query: currentQuery, student_id: user.id }), 
       });
       const data = await response.json();
-
       if (!response.ok) throw new Error(data.error || 'Query failed');
 
-      setChatHistory(prev => [...prev, { 
-        role: 'cortex', 
-        content: data.answer, 
-        context: data.context_used 
-      }]);
+      setChatHistory(prev => [...prev, { role: 'cortex', content: data.answer, context: data.context_used }]);
     } catch (err) {
       toast.error(err.message);
       setChatHistory(prev => [...prev, { role: 'error', content: `Error communicating with local AI: ${err.message}` }]);
@@ -248,11 +239,59 @@ export default function Intelligence() {
     }
   };
 
+  const generateQuiz = async () => {
+    setIsGeneratingQuiz(true);
+    setQuizData(null);
+    setQuizScore(0);
+    setCurrentQIndex(0);
+    setIsAnswerRevealed(false);
+    setSelectedOption(null);
+    const toastId = toast.loading("Cortex is analyzing the text and compiling a quiz...");
+
+    try {
+      const baseUrl = import.meta.env.VITE_FLASK_API_URL || 'http://localhost:5000';
+      const response = await fetch(`${baseUrl}/api/vault/quiz`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_id: user.id }) 
+      });
+      const data = await response.json();
+      
+      if (!response.ok) throw new Error(data.error || 'Quiz generation failed');
+      
+      setQuizData(data);
+      toast.success("Quiz compiled successfully!", { id: toastId });
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message, { id: toastId });
+    } finally {
+      setIsGeneratingQuiz(false);
+    }
+  };
+
+  const handleAnswerSelect = (option) => {
+    if (isAnswerRevealed) return;
+    setSelectedOption(option);
+    setIsAnswerRevealed(true);
+    
+    // Safety check in case the AI generated weird keys
+    const correctAnswer = quizData?.[currentQIndex]?.correct_answer;
+    if (option === correctAnswer) {
+      setQuizScore(prev => prev + 1);
+    }
+  };
+
+  const nextQuestion = () => {
+    setIsAnswerRevealed(false);
+    setSelectedOption(null);
+    setCurrentQIndex(prev => prev + 1);
+  };
+
   const currentGPA = useMemo(() => calcGPA(subjects), [subjects]);
   const simGrade = useMemo(() => predictGradeLocal(simMarks, simAttendance, simAssignments), [simMarks, simAttendance, simAssignments]);
   const simGPA = useMemo(() => {
     if (!selectedSubject) return "0.00";
-    const updated = subjects.map(s => s.id === selectedSubject.id ? { ...s, marks: simMarks, attendance: simAttendance, assignments: simAssignments } : s);
+    const updated = (subjects || []).map(s => s.id === selectedSubject.id ? { ...s, marks: simMarks, attendance: simAttendance, assignments: simAssignments } : s);
     return calcGPA(updated);
   }, [simMarks, simAttendance, simAssignments, selectedSubject, subjects]);
   const gpaDiff = (parseFloat(simGPA) - parseFloat(currentGPA)).toFixed(2);
@@ -304,7 +343,8 @@ export default function Intelligence() {
         </div>
       </motion.div>
 
-      {subjects.length === 0 && activeTab !== 'vault' ? (
+      {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+      {subjects?.length === 0 && activeTab !== 'vault' ? (
         <div className="flex flex-col items-center justify-center py-20">
           <Activity className="text-slate-300 mb-4" size={48} />
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Awaiting Data Streams</h2>
@@ -313,18 +353,18 @@ export default function Intelligence() {
       ) : (
         <AnimatePresence mode="wait">
           
-          {/* ── TAB 0: THE NEW ACADEMIC VAULT ── */}
+          {/* ── TAB 0: THE NEW CLOUD ACADEMIC VAULT ── */}
           {activeTab === 'vault' && (
             <motion.div key="vault" variants={animContainer} initial="hidden" animate="visible" exit="hidden" className="space-y-8">
               <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-950 p-8 rounded-[2rem] text-white shadow-lg relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500 rounded-full blur-3xl opacity-20 -mr-20 -mt-20" />
                 <div className="relative z-10">
                   <div className="flex items-center gap-3 mb-2">
-                    <span className="bg-indigo-500/30 text-indigo-300 text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-indigo-400/20">Deep Tech Layer</span>
+                    <span className="bg-indigo-500/30 text-indigo-300 text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-indigo-400/20">Cloud Tech Layer</span>
                   </div>
                   <h1 className="text-3xl font-black tracking-tight mb-2">Academic Memory Vault</h1>
                   <p className="text-indigo-200 text-sm max-w-xl font-medium">
-                    Upload textbooks, lecture PPTs, or syllabus PDFs. Our localized vector extraction layer transforms raw text into dynamic semantic memory embeddings for your local AI.
+                    Upload textbooks or syllabus PDFs. Your files are securely stored in Supabase Buckets, and vector embeddings are tracked via pgvector in the cloud.
                   </p>
                 </div>
               </div>
@@ -340,7 +380,7 @@ export default function Intelligence() {
                       <input type="file" accept="application/pdf" onChange={handleFileUpload} className="hidden" disabled={isUploading} />
                       <UploadCloud size={36} className="mx-auto text-slate-400 group-hover:text-indigo-600 mb-2 transition-colors" />
                       <span className="block text-xs font-bold text-slate-700 mb-1">
-                        {isUploading ? 'Ingesting vectors...' : 'Drop textbook PDF here'}
+                        {isUploading ? 'Syncing to Supabase Cloud...' : 'Drop textbook PDF here'}
                       </span>
                       <span className="block text-[10px] text-slate-400 font-medium">Max size 200MB · Searchable text only</span>
                     </label>
@@ -351,7 +391,7 @@ export default function Intelligence() {
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-bold text-slate-800 truncate">{file.name}</p>
                           <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mt-0.5">
-                            {isUploading ? 'Processing pipeline active' : 'Database Ready'}
+                            {isUploading ? 'Cloud Database Synching' : 'Database Ready'}
                           </p>
                         </div>
                       </div>
@@ -360,7 +400,7 @@ export default function Intelligence() {
 
                   <div className="bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm">
                     <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-                      <Sparkles size={16} className="text-amber-500" /> Local Vector Engine
+                      <Sparkles size={16} className="text-amber-500" /> Cloud Vector Engine
                     </h3>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-xs border-b border-slate-50 pb-2">
@@ -368,8 +408,8 @@ export default function Intelligence() {
                         <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[10px]">all-MiniLM-L6-v2</span>
                       </div>
                       <div className="flex justify-between items-center text-xs border-b border-slate-50 pb-2">
-                        <span className="text-slate-400 font-medium">Vector Dimensions</span>
-                        <span className="font-bold text-indigo-600">384 Float32</span>
+                        <span className="text-slate-400 font-medium">Database Layer</span>
+                        <span className="font-bold text-indigo-600">Supabase pgvector</span>
                       </div>
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-slate-400 font-medium">Indexed Chunks</span>
@@ -381,10 +421,24 @@ export default function Intelligence() {
 
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white border border-slate-100 rounded-[2rem] shadow-sm flex flex-col min-h-[550px] max-h-[700px] overflow-hidden">
-                    <div className="border-b border-slate-100 p-4 bg-slate-50/50 flex items-center justify-between z-10">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                        <HelpCircle size={14} className="text-indigo-600" /> Grounded Generation Sandbox
-                      </span>
+                    
+                    {/* SANDBOX MODE TOGGLE HEADER */}
+                    <div className="border-b border-slate-100 p-4 bg-slate-50/50 flex flex-wrap items-center justify-between z-10 gap-4">
+                      <div className="flex bg-white p-1 rounded-xl shadow-sm border border-slate-200">
+                        <button 
+                          onClick={() => setSandboxMode('chat')}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all ${sandboxMode === 'chat' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                          <MessageSquare size={14} /> AI Chat
+                        </button>
+                        <button 
+                          onClick={() => setSandboxMode('quiz')}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all ${sandboxMode === 'quiz' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                          <GraduationCap size={14} /> Practice Quiz
+                        </button>
+                      </div>
+                      
                       {vaultStats.filename && (
                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full truncate max-w-[200px]">
                           Connected: {vaultStats.filename}
@@ -392,88 +446,214 @@ export default function Intelligence() {
                       )}
                     </div>
 
-                    <div className="flex-1 p-6 overflow-y-auto bg-slate-50/30">
-                      {chatHistory.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 py-12">
-                          <BrainCircuit size={40} className="text-slate-300 mb-3 animate-pulse" />
-                          <p className="text-xs font-bold text-slate-500">Query Workspace Active</p>
-                          <p className="text-[11px] text-slate-400 max-w-xs mt-1">Ingest an academic document on the left, then ask specific structural questions regarding your course load.</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-6">
-                          {chatHistory.map((msg, idx) => (
-                            <motion.div
-                              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={idx}
-                              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                            >
-                              {msg.role === 'user' ? (
-                                <div className="bg-indigo-600 text-white p-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
-                                  <p className="text-sm font-medium whitespace-pre-wrap">{msg.content}</p>
-                                </div>
-                              ) : msg.role === 'cortex' ? (
-                                <div className="bg-white border border-indigo-100 p-5 rounded-2xl rounded-tl-sm max-w-[85%] shadow-sm space-y-3">
-                                  <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5">
-                                    <Sparkles size={12} /> Cortex Grounded Synthesis
-                                  </p>
-                                  <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-wrap">{msg.content}</p>
+                    {/* DYNAMIC SANDBOX AREA */}
+                    {sandboxMode === 'chat' ? (
+                      <>
+                        {/* CHAT UI */}
+                        <div className="flex-1 p-6 overflow-y-auto bg-slate-50/30">
+                          {(chatHistory || []).length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 py-12">
+                              <BrainCircuit size={40} className="text-slate-300 mb-3 animate-pulse" />
+                              <p className="text-xs font-bold text-slate-500">Query Workspace Active</p>
+                              <p className="text-[11px] text-slate-400 max-w-xs mt-1">Ingest an academic document on the left, then ask specific structural questions regarding your course load.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-6">
+                              {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+                              {(chatHistory || []).map((msg, idx) => (
+                                <motion.div
+                                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={idx}
+                                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                >
+                                  {msg.role === 'user' ? (
+                                    <div className="bg-indigo-600 text-white p-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
+                                      <p className="text-sm font-medium whitespace-pre-wrap">{msg.content}</p>
+                                    </div>
+                                  ) : msg.role === 'cortex' ? (
+                                    <div className="bg-white border border-indigo-100 p-5 rounded-2xl rounded-tl-sm max-w-[85%] shadow-sm space-y-3">
+                                      <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Sparkles size={12} /> Cortex Grounded Synthesis
+                                      </p>
+                                      <p className="text-sm text-slate-700 leading-relaxed font-medium whitespace-pre-wrap">{msg.content}</p>
 
-                                  {msg.context && (
-                                    <div className="mt-3 border border-slate-100 rounded-xl p-3 bg-slate-50/50">
-                                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Mathematical Source Context</p>
-                                      <pre className="text-[10px] text-slate-500 font-mono bg-white p-2 rounded-lg border border-slate-100 max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                                        {msg.context}
-                                      </pre>
+                                      {msg.context && (
+                                        <div className="mt-3 border border-slate-100 rounded-xl p-3 bg-slate-50/50">
+                                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Mathematical Source Context</p>
+                                          <pre className="text-[10px] text-slate-500 font-mono bg-white p-2 rounded-lg border border-slate-100 max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                                            {msg.context}
+                                          </pre>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="bg-rose-50 border border-rose-100 text-rose-600 p-3 rounded-xl text-xs font-bold mx-auto">
+                                      {msg.content}
                                     </div>
                                   )}
-                                </div>
-                              ) : (
-                                <div className="bg-rose-50 border border-rose-100 text-rose-600 p-3 rounded-xl text-xs font-bold mx-auto">
-                                  {msg.content}
+                                </motion.div>
+                              ))}
+                              
+                              {isQuerying && (
+                                <div className="flex justify-start">
+                                  <div className="bg-white border border-slate-200 p-4 rounded-2xl rounded-tl-sm max-w-[85%] shadow-sm flex items-center gap-3">
+                                    <BrainCircuit size={16} className="text-indigo-400 animate-pulse" />
+                                    <span className="text-xs font-bold text-slate-400">Cortex is querying the cloud vector database...</span>
+                                  </div>
                                 </div>
                               )}
-                            </motion.div>
-                          ))}
-                          
-                          {isQuerying && (
-                            <div className="flex justify-start">
-                              <div className="bg-white border border-slate-200 p-4 rounded-2xl rounded-tl-sm max-w-[85%] shadow-sm flex items-center gap-3">
-                                <BrainCircuit size={16} className="text-indigo-400 animate-pulse" />
-                                <span className="text-xs font-bold text-slate-400">Cortex is synthesizing parameters...</span>
-                              </div>
+                              <div ref={chatEndRef} />
                             </div>
                           )}
-                          <div ref={chatEndRef} />
                         </div>
-                      )}
-                    </div>
 
-                    <form onSubmit={handleQuerySubmit} className="border-t border-slate-100 p-4 bg-white z-10">
-                      <div className="relative flex items-center">
-                        <input
-                          type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-                          placeholder={
-                            isQuerying ? "Cortex is reading the vault and synthesizing..." :
-                            vaultStats.indexed > 0 ? "Ask anything about the ingested documents..." :
-                            "Please ingest a document to begin questioning system memory..."
-                          }
-                          disabled={vaultStats.indexed === 0 || isQuerying}
-                          className="w-full pl-4 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 focus:bg-white transition-all text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                        />
-                        <button
-                          type="submit" disabled={vaultStats.indexed === 0 || isQuerying || !query.trim()}
-                          className="absolute right-2 p-2 w-9 h-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-all disabled:bg-slate-200 disabled:text-slate-400 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
-                        >
-                          {isQuerying ? (
-                            <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                          ) : (
-                            <Send size={16} />
+                        <form onSubmit={handleQuerySubmit} className="border-t border-slate-100 p-4 bg-white z-10">
+                          <div className="relative flex items-center">
+                            <input
+                              type="text" value={query} onChange={(e) => setQuery(e.target.value)}
+                              placeholder={
+                                isQuerying ? "Cortex is querying the cloud vector database..." :
+                                vaultStats.indexed > 0 ? "Ask anything about the ingested documents..." :
+                                "Please ingest a document to begin questioning system memory..."
+                              }
+                              disabled={vaultStats.indexed === 0 || isQuerying}
+                              className="w-full pl-4 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:border-indigo-600 focus:bg-white transition-all text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                            />
+                            <button
+                              type="submit" disabled={vaultStats.indexed === 0 || isQuerying || !query.trim()}
+                              className="absolute right-2 p-2 w-9 h-9 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-all disabled:bg-slate-200 disabled:text-slate-400 cursor-pointer disabled:cursor-not-allowed flex items-center justify-center"
+                            >
+                              {isQuerying ? (
+                                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                              ) : (
+                                <Send size={16} />
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      </>
+                    ) : (
+                      <>
+                        {/* QUIZ UI */}
+                        <div className="flex-1 p-8 overflow-y-auto bg-slate-50/30 flex flex-col justify-center">
+                          {!quizData && !isGeneratingQuiz && (
+                             <div className="text-center space-y-4">
+                                <GraduationCap size={48} className="mx-auto text-indigo-200" />
+                                <div>
+                                  <h3 className="text-lg font-black text-slate-900">Interactive Knowledge Check</h3>
+                                  <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">Cortex will pull from your pgvector cloud chunks and dynamically generate a multiple-choice exam.</p>
+                                </div>
+                                <button 
+                                  onClick={generateQuiz} 
+                                  disabled={vaultStats.indexed === 0}
+                                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold rounded-xl shadow-md transition-all cursor-pointer disabled:cursor-not-allowed"
+                                >
+                                  Generate Practice Quiz
+                                </button>
+                                {vaultStats.indexed === 0 && <p className="text-[10px] text-rose-500 font-bold uppercase tracking-wider mt-2">Upload a PDF first</p>}
+                             </div>
                           )}
-                        </button>
-                      </div>
-                    </form>
+
+                          {isGeneratingQuiz && (
+                            <div className="text-center space-y-4">
+                               <div className="animate-spin h-10 w-10 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto" />
+                               <p className="text-sm font-bold text-slate-500">Synthesizing cloud materials...</p>
+                            </div>
+                          )}
+
+                          {quizData && currentQIndex < (quizData?.length || 0) && (
+                            <AnimatePresence mode="wait">
+                              <motion.div 
+                                key={currentQIndex}
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -20 }}
+                                className="max-w-2xl mx-auto w-full space-y-6"
+                              >
+                                <div className="flex justify-between items-center text-xs font-black uppercase tracking-widest text-slate-400">
+                                  <span>Question {currentQIndex + 1} of {quizData?.length || 0}</span>
+                                  <span className="text-indigo-600">Score: {quizScore}</span>
+                                </div>
+
+                                <h3 className="text-xl font-bold text-slate-900 leading-snug">
+                                  {quizData[currentQIndex]?.question || "Missing Question from AI"}
+                                </h3>
+
+                                <div className="space-y-3">
+                                  {/* 🛡️ OPTIONAL CHAINING ADDED HERE TO PREVENT CRASHES */}
+                                  {(quizData[currentQIndex]?.options || []).map((opt, i) => {
+                                    const isCorrect = opt === quizData[currentQIndex]?.correct_answer;
+                                    const isSelected = opt === selectedOption;
+                                    
+                                    let btnClass = "border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 text-slate-700";
+                                    if (isAnswerRevealed) {
+                                      if (isCorrect) btnClass = "border-emerald-500 bg-emerald-50 text-emerald-700 font-bold";
+                                      else if (isSelected) btnClass = "border-rose-500 bg-rose-50 text-rose-700 font-bold";
+                                      else btnClass = "border-slate-200 bg-slate-50 opacity-50";
+                                    }
+
+                                    return (
+                                      <button
+                                        key={i}
+                                        onClick={() => handleAnswerSelect(opt)}
+                                        disabled={isAnswerRevealed}
+                                        className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer disabled:cursor-default flex items-center justify-between ${btnClass}`}
+                                      >
+                                        <span>{opt}</span>
+                                        {isAnswerRevealed && isCorrect && <CheckCircle2 size={18} className="text-emerald-500" />}
+                                        {isAnswerRevealed && isSelected && !isCorrect && <XCircle size={18} className="text-rose-500" />}
+                                      </button>
+                                    );
+                                  })}
+
+                                  {/* Failsafe message if the AI forgets to provide options */}
+                                  {(!quizData[currentQIndex]?.options || quizData[currentQIndex]?.options?.length === 0) && (
+                                     <p className="text-rose-500 text-sm font-bold bg-rose-50 p-3 rounded-lg border border-rose-100">
+                                       AI System skipped generating answer options for this chunk. Click Next Question.
+                                     </p>
+                                  )}
+                                </div>
+
+                                {isAnswerRevealed && (
+                                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-5 bg-indigo-50 border border-indigo-100 rounded-xl space-y-2 mt-4">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600 flex items-center gap-1"><BrainCircuit size={14}/> Cortex Explanation</p>
+                                    <p className="text-sm font-medium text-slate-700 leading-relaxed">{quizData[currentQIndex]?.explanation || "No further context provided."}</p>
+                                    
+                                    <button 
+                                      onClick={nextQuestion}
+                                      className="mt-4 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-sm transition-colors"
+                                    >
+                                      {currentQIndex === (quizData?.length || 1) - 1 ? 'View Final Results' : 'Next Question ➔'}
+                                    </button>
+                                  </motion.div>
+                                )}
+                              </motion.div>
+                            </AnimatePresence>
+                          )}
+
+                          {quizData && currentQIndex >= (quizData?.length || 0) && (
+                             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center space-y-6 max-w-md mx-auto">
+                               <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mx-auto shadow-xl shadow-indigo-200">
+                                  <span className="text-3xl font-black text-white">{quizScore}/{quizData?.length || 0}</span>
+                               </div>
+                               <div>
+                                 <h3 className="text-2xl font-black text-slate-900">Quiz Completed!</h3>
+                                 <p className="text-sm text-slate-500 mt-2 font-medium">You scored {Math.round((quizScore / (quizData?.length || 1)) * 100)}% on this vault extraction.</p>
+                               </div>
+                               <button 
+                                  onClick={generateQuiz} 
+                                  className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-md transition-all cursor-pointer"
+                                >
+                                  Generate A New Quiz
+                                </button>
+                             </motion.div>
+                          )}
+
+                        </div>
+                      </>
+                    )}
 
                   </div>
                 </div>
@@ -487,8 +667,8 @@ export default function Intelligence() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
                   { label: 'Current SGPA', value: currentGPA, desc: 'Based on active predicted grades', icon: '🎓', color: 'text-indigo-600', bg: 'bg-indigo-50/60', bColor: 'border-indigo-100' },
-                  { label: 'Subjects at Risk', value: subjects.filter(s=> getSubjectRisk(s.marks, s.attendance, s.assignments) !== 'Low').length, desc: 'Requires parameter adjustment', icon: '⚠️', color: 'text-amber-600', bg: 'bg-amber-50/60', bColor: 'border-amber-100' },
-                  { label: 'Safe Subjects', value: subjects.filter(s=> getSubjectRisk(s.marks, s.attendance, s.assignments) === 'Low').length, desc: 'Optimized progression pipeline metrics', icon: '✅', color: 'text-emerald-600', bg: 'bg-emerald-50/60', bColor: 'border-emerald-100' }
+                  { label: 'Subjects at Risk', value: (subjects || []).filter(s=> getSubjectRisk(s.marks, s.attendance, s.assignments) !== 'Low').length, desc: 'Requires parameter adjustment', icon: '⚠️', color: 'text-amber-600', bg: 'bg-amber-50/60', bColor: 'border-amber-100' },
+                  { label: 'Safe Subjects', value: (subjects || []).filter(s=> getSubjectRisk(s.marks, s.attendance, s.assignments) === 'Low').length, desc: 'Optimized progression pipeline metrics', icon: '✅', color: 'text-emerald-600', bg: 'bg-emerald-50/60', bColor: 'border-emerald-100' }
                 ].map((kpi, idx) => (
                   <motion.div key={idx} variants={animItem} className={`p-6 rounded-[2rem] bg-white border ${kpi.bColor} shadow-sm flex items-center justify-between`}>
                     <div>
@@ -502,7 +682,8 @@ export default function Intelligence() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {subjects.map((s, i) => {
+                {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+                {(subjects || []).map((s, i) => {
                   const riskLevel = getSubjectRisk(s.marks, s.attendance, s.assignments);
                   const config = riskConfig[riskLevel];
                   const grade = predictGradeLocal(s.marks, s.attendance, s.assignments);
@@ -583,7 +764,8 @@ export default function Intelligence() {
                 <div className="space-y-4">
                   <label className="text-xs font-black text-slate-500 uppercase tracking-widest block">Target Curriculum Area</label>
                   <div className="flex flex-col gap-2 max-h-[200px] overflow-y-auto pr-2">
-                    {subjects.map(sub => (
+                    {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+                    {(subjects || []).map(sub => (
                       <button
                         key={sub.id} onClick={() => setSelectedSubject(sub)}
                         className={`w-full p-4 rounded-xl text-left border flex justify-between items-center transition-all ${selectedSubject.id === sub.id ? 'border-indigo-600 bg-indigo-50/40 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
@@ -676,7 +858,8 @@ export default function Intelligence() {
           {/* ── TAB 3: FORECAST ── */}
           {activeTab === 'forecast' && (
             <motion.div key="forecast" variants={animContainer} initial="hidden" animate="visible" exit="hidden" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-               {subjects.map((s) => {
+               {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+               {(subjects || []).map((s) => {
                   const totalHeld = 40;
                   const attended = Math.round((s.attendance * totalHeld) / 100);
                   const left = 20;
@@ -750,13 +933,13 @@ export default function Intelligence() {
 
                 <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm min-h-[200px]">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Urgency Alerts</h3>
-                  {planTasks.length > 0 ? (
+                  {(planTasks || []).length > 0 ? (
                     <div className="space-y-3">
                       <p className="text-xs font-bold text-slate-600 leading-relaxed">
-                        You have <span className="text-indigo-600 font-black">{planTasks.filter(t => t.priority?.toLowerCase() === 'high').length} critical items</span> demanding immediate execution.
+                        You have <span className="text-indigo-600 font-black">{(planTasks || []).filter(t => t.priority?.toLowerCase() === 'high').length} critical items</span> demanding immediate execution.
                       </p>
                       <p className="text-xs font-bold text-slate-600 leading-relaxed">
-                        Total time blocked on schedule: <span className="text-slate-800 font-black">{planTasks.reduce((acc, curr) => acc + curr.minutes, 0)} minutes</span>.
+                        Total time blocked on schedule: <span className="text-slate-800 font-black">{(planTasks || []).reduce((acc, curr) => acc + curr.minutes, 0)} minutes</span>.
                       </p>
                     </div>
                   ) : (
@@ -770,7 +953,7 @@ export default function Intelligence() {
 
               {/* RIGHT GRAPH PANEL - HORIZONTAL BAR CHART */}
               <div className="lg:col-span-3 bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm flex flex-col items-center justify-center min-h-[500px] relative">
-                {planTasks.length === 0 ? (
+                {(planTasks || []).length === 0 ? (
                   <div className="text-center text-slate-400">
                     <BrainCircuit size={48} className="mx-auto mb-4 opacity-20" />
                     <p className="font-bold text-sm">Action Plan empty.</p>
@@ -779,13 +962,13 @@ export default function Intelligence() {
                 ) : (
                   <div className="w-full h-full pb-4">
                     <div className="mb-8 pl-4 border-l-4 border-indigo-600">
-                      <h3 className="text-lg font-black tracking-tight text-slate-900">Workload & Urgency Distribution</h3>
+                      <h3 className="text-lg font-black tracking-tight text-slate-800">Workload & Urgency Distribution</h3>
                       <p className="text-xs font-medium text-slate-400 mt-1">Hover over any bar to view the exact module concepts you need to cover.</p>
                     </div>
                     
-                    <ResponsiveContainer width="100%" height={Math.max(400, planTasks.length * 60)}>
+                    <ResponsiveContainer width="100%" height={Math.max(400, (planTasks || []).length * 60)}>
                       <BarChart
-                        data={planTasks}
+                        data={planTasks || []}
                         layout="vertical"
                         margin={{ top: 10, right: 30, left: 10, bottom: 20 }}
                       >
@@ -841,9 +1024,9 @@ export default function Intelligence() {
                           barSize={24}
                           animationDuration={1500}
                         >
-                          {planTasks.map((entry, index) => {
+                          {/* 🛡️ OPTIONAL CHAINING ADDED HERE */}
+                          {(planTasks || []).map((entry, index) => {
                             const prio = entry.priority?.toLowerCase() || 'medium';
-                            // Analogous Tech Palette
                             const color = prio === 'high' ? '#4f46e5' : prio === 'medium' ? '#8b5cf6' : '#38bdf8';
                             return <Cell key={`cell-${index}`} fill={color} />;
                           })}
