@@ -5,7 +5,8 @@ import { useAuthStore } from '../store/authStore'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Plus, X, BrainCircuit, Activity, Sparkles, 
-  Clock, BookmarkCheck, CalendarDays, AlertTriangle 
+  Clock, BookmarkCheck, CalendarDays, AlertTriangle,
+  Trash2, Download, Filter
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -23,6 +24,10 @@ export default function Dashboard() {
   const [newSubject, setNewSubject] = useState({ name: '', code: '', marks: '', attendance: '', assignments: '' })
   const [isAdding, setIsAdding] = useState(false)
   const [dynamicOptiScore, setDynamicOptiScore] = useState(0)
+
+  // ─── NEW: FILTERING STATE ───
+  const [riskFilter, setRiskFilter] = useState('All')
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
 
   // ─── STATES FOR THE AI STUDY PLAN TIMELINE ───
   const [timeline, setTimeline] = useState([])
@@ -126,6 +131,24 @@ export default function Dashboard() {
     }
   }
 
+  // ─── NEW: DELETE SUBJECT LOGIC ───
+  const handleDeleteSubject = async (subjectId) => {
+    if (!window.confirm("Are you sure you want to delete this academic record?")) return;
+    const toastId = toast.loading("Deleting record...");
+    try {
+      const { error } = await supabase
+        .from('academic_records')
+        .delete()
+        .eq('id', subjectId);
+
+      if (error) throw error;
+      toast.success("Record permanently deleted.", { id: toastId });
+      fetchLiveSubjects(); // Re-fetch to auto-update OptiScore and tables
+    } catch (err) {
+      toast.error(`Deletion failed: ${err.message}`, { id: toastId });
+    }
+  }
+
   // ─── CALL LOCAL PYTHON AI ENDPOINT TO TRIGGER GENERATION ───
   const handleGenerateTimeline = async () => {
     if (!user?.id) {
@@ -194,6 +217,80 @@ export default function Dashboard() {
 
   const calcRisk = (marks, att) => (marks < 60 || att < 75) ? 'High' : (marks < 75 || att < 85) ? 'Medium' : 'Low';
   const calcGrade = (marks) => marks >= 90 ? 'A+' : marks >= 80 ? 'A' : marks >= 70 ? 'B+' : marks >= 60 ? 'B' : 'C';
+
+  // ─── NEW: FILTERING LOGIC ───
+  const filteredSubjects = subjects.filter(sub => {
+    if (riskFilter === 'All') return true;
+    return calcRisk(sub.marks, sub.attendance) === riskFilter;
+  });
+
+  // ─── NEW: PDF GENERATION LOGIC (CLEANED HEADER) ───
+  const handleExportPDF = () => {
+    const printWindow = window.open('', '', 'height=800,width=1200');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Academic Records Log</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #0f172a; }
+            .header { text-align: center; margin-bottom: 40px; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; }
+            .header h1 { margin: 0; color: #4f46e5; font-size: 28px; }
+            .header h2 { margin: 10px 0 5px 0; color: #334155; font-size: 18px; }
+            .header p { margin: 5px 0 0 0; color: #64748b; font-size: 14px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { padding: 12px 15px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+            th { background-color: #f8fafc; font-weight: bold; text-transform: uppercase; font-size: 12px; color: #64748b; }
+            .risk-Low { color: #10b981; font-weight: bold; }
+            .risk-Medium { color: #f59e0b; font-weight: bold; }
+            .risk-High { color: #e11d48; font-weight: bold; }
+            .footer { margin-top: 50px; font-size: 12px; color: #94a3b8; text-align: center; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>OptiMind DecisionNet</h1>
+            <h2>Official Academic Performance Log</h2>
+            <p>Student Name: <strong>${liveProfile?.full_name || 'Student'}</strong> | Generated On: <strong>${new Date().toLocaleDateString()}</strong></p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Subject Name</th>
+                <th>Code</th>
+                <th>Marks</th>
+                <th>Attendance</th>
+                <th>Est. Grade</th>
+                <th>Risk Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredSubjects.map(sub => `
+                <tr>
+                  <td>${sub.subject_name}</td>
+                  <td>${sub.subject_code}</td>
+                  <td>${sub.marks}%</td>
+                  <td>${sub.attendance}%</td>
+                  <td>${calcGrade(sub.marks)}</td>
+                  <td class="risk-${calcRisk(sub.marks, sub.attendance)}">${calcRisk(sub.marks, sub.attendance)} Risk</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="footer">
+            OptiMind AI Analysis Engine • Document securely generated from verified database telemetry.
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    
+    // Slight delay ensures styles render before the print dialog opens
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
 
   const avgMarks = subjects.length ? Math.round(subjects.reduce((acc, s) => acc + s.marks, 0) / subjects.length) : 0;
   const avgAtt = subjects.length ? Math.round(subjects.reduce((acc, s) => acc + s.attendance, 0) / subjects.length) : 0;
@@ -366,26 +463,65 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* REAL ACADEMIC RECORDS TABLE */}
+      {/* REAL ACADEMIC RECORDS TABLE WITH NEW CONTROLS */}
       <div className="bg-white border border-slate-200 rounded-[2rem] shadow-sm p-6 lg:p-8">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Academic Records</h2>
             <p className="text-sm text-slate-500 font-medium">Your live semester progression data</p>
           </div>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-indigo-100 transition-colors"
-          >
-            <Plus size={16} /> Add Subject
-          </button>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Filter Dropdown & PDF Export Button - Unified Structure */}
+            <div className="relative">
+              {/* Custom Dropdown Trigger */}
+              <button
+                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-bold transition-all border border-slate-200"
+              >
+                {riskFilter === 'All' ? 'All Risks' : `${riskFilter} Risk`}
+              </button>
+
+              {/* Custom Dropdown Menu */}
+              {isFilterOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden z-20">
+                  {['All', 'High', 'Medium', 'Low'].map((option) => (
+                    <button
+                      key={option}
+                      onClick={() => { setRiskFilter(option); setIsFilterOpen(false); }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-indigo-50 hover:text-indigo-600 transition-colors ${riskFilter === option ? 'bg-indigo-600 text-white hover:bg-indigo-600 hover:text-white' : 'text-slate-600'}`}
+                    >
+                      {option === 'All' ? 'All Risks' : `${option} Risk`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* PDF Export Button - Sharing exact structure with Dropdown */}
+            <button
+              onClick={handleExportPDF}
+              disabled={filteredSubjects.length === 0}
+              className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-bold transition-all border border-slate-200 disabled:opacity-50"
+            >
+              Export PDF Log
+            </button>
+
+            {/* Add Subject Button */}
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md shadow-indigo-100 transition-colors"
+            >
+              <Plus size={16} /> Add Subject
+            </button>
+          </div>
         </div>
 
-        {subjects.length === 0 ? (
+        {filteredSubjects.length === 0 ? (
           <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl">
             <Activity className="mx-auto text-slate-300 mb-3" size={40} />
-            <h3 className="text-slate-600 font-bold mb-1">No subjects found</h3>
-            <p className="text-sm text-slate-400">Click \"Add Subject\" to begin tracking your performance.</p>
+            <h3 className="text-slate-600 font-bold mb-1">No records found</h3>
+            <p className="text-sm text-slate-400">Change your filter or add a new subject to track performance.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -398,41 +534,60 @@ export default function Dashboard() {
                   <th className="pb-4">Attendance</th>
                   <th className="pb-4">Est. Grade</th>
                   <th className="pb-4">Baseline Risk</th>
+                  <th className="pb-4 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="text-sm font-semibold text-slate-700 divide-y divide-slate-50">
-                {subjects.map((sub) => {
-                  const risk = calcRisk(sub.marks, sub.attendance);
-                  const grade = calcGrade(sub.marks);
-                  return (
-                    <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="py-4 text-slate-900 font-bold">{sub.subject_name}</td>
-                      <td className="py-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{sub.subject_code}</span></td>
-                      <td className="py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="w-8">{sub.marks}%</span>
-                          <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.marks >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.marks}%` }} /></div>
-                        </div>
-                      </td>
-                      <td className="py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="w-8">{sub.attendance}%</span>
-                          <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.attendance >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.attendance}%` }} /></div>
-                        </div>
-                      </td>
-                      <td className="py-4 font-black">{grade}</td>
-                      <td className="py-4">
-                        <span className={`px-2 py-1 rounded-md text-[10px] uppercase font-bold tracking-wider ${
-                          risk === 'Low' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 
-                          risk === 'Medium' ? 'bg-amber-50 text-amber-600 border border-amber-200' : 
-                          'bg-rose-50 text-rose-600 border border-rose-200'
-                        }`}>
-                          {risk}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
+                <AnimatePresence>
+                  {filteredSubjects.map((sub) => {
+                    const risk = calcRisk(sub.marks, sub.attendance);
+                    const grade = calcGrade(sub.marks);
+                    return (
+                      <motion.tr 
+                        key={sub.id} 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0, backgroundColor: '#fef2f2' }}
+                        className="hover:bg-slate-50/50 transition-colors"
+                      >
+                        <td className="py-4 text-slate-900 font-bold">{sub.subject_name}</td>
+                        <td className="py-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{sub.subject_code}</span></td>
+                        <td className="py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="w-8">{sub.marks}%</span>
+                            <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.marks >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.marks}%` }} /></div>
+                          </div>
+                        </td>
+                        <td className="py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="w-8">{sub.attendance}%</span>
+                            <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className={`h-full rounded-full ${sub.attendance >= 75 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${sub.attendance}%` }} /></div>
+                          </div>
+                        </td>
+                        <td className="py-4 font-black">{grade}</td>
+                        <td className="py-4">
+                          <span className={`px-2 py-1 rounded-md text-[10px] uppercase font-bold tracking-wider ${
+                            risk === 'Low' ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 
+                            risk === 'Medium' ? 'bg-amber-50 text-amber-600 border border-amber-200' : 
+                            'bg-rose-50 text-rose-600 border border-rose-200'
+                          }`}>
+                            {risk}
+                          </span>
+                        </td>
+                        <td className="py-4 text-center">
+                          {/* DELETE BUTTON */}
+                          <button 
+                            onClick={() => handleDeleteSubject(sub.id)}
+                            className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer inline-flex"
+                            title="Delete Record"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </motion.tr>
+                    )
+                  })}
+                </AnimatePresence>
               </tbody>
             </table>
           </div>
